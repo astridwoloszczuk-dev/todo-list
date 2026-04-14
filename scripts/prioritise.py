@@ -17,14 +17,32 @@ NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 
 CATEGORIES = ["work", "personal", "health", "finance", "household", "social", "learning", "errands", "general"]
 
+PRIORITY_RULES = """
+Priority levels (use exactly these words):
+- high     → genuine urgency, real deadline, health/safety, or meaningful consequence if missed
+- medium   → should happen this week, no immediate crisis
+- low      → nice to do, no real deadline
+- someday  → aspirational, no timeline
+
+Important: for tasks created by a CHILD, apply extra scepticism to urgency claims.
+Children tend to label everything "URGENT". Buying ice cream, wanting a new game,
+needing snacks — these are low or someday regardless of the language used.
+Health appointments, school deadlines, and genuine responsibilities are still high.
+"""
+
 
 def main():
-    # 1. Create clients
     supa = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    # 2. Fetch unprocessed pending todos
-    resp = supa.table("todos").select("*").eq("status", "pending").eq("processed", 0).execute()
+    # Fetch unprocessed pending todos, including creator's role
+    resp = (
+        supa.table("todos")
+        .select("id, text, created_by, people!todos_created_by_fkey(role, name)")
+        .eq("status", "pending")
+        .eq("processed", 0)
+        .execute()
+    )
     todos = resp.data or []
 
     if not todos:
@@ -33,29 +51,37 @@ def main():
 
     print(f"Prioritising {len(todos)} tasks...")
 
-    # 3. Format for Claude
-    todo_list = "\n".join([f'- id:{t["id"]} | {t["text"]}' for t in todos])
+    # Build todo list with creator context for Claude
+    todo_lines = []
+    for t in todos:
+        creator = t.get("people") or {}
+        role = creator.get("role", "parent")
+        name = creator.get("name", "unknown")
+        todo_lines.append(f'- id:{t["id"]} | created_by:{name} ({role}) | {t["text"]}')
+    todo_list = "\n".join(todo_lines)
 
-    # 4. Call Claude
     prompt = (
-        f"Analyse these tasks and return a JSON array. "
-        f"For each task assign: priority (1=urgent, 2=high, 3=medium, 4=low, 5=someday), "
-        f"category (one of: {', '.join(CATEGORIES)}), "
-        f"and notes (max 80 chars, practical tip or context).\n\n"
+        f"{PRIORITY_RULES}\n\n"
+        f"Categories (pick one): {', '.join(CATEGORIES)}\n\n"
+        f"Analyse these tasks and return a JSON array.\n"
+        f"For each task include:\n"
+        f"  id (integer, from the task)\n"
+        f"  priority (one of: high, medium, low, someday)\n"
+        f"  category (one of the categories above)\n"
+        f"  reasoning (max 80 chars — one sentence explaining the priority)\n\n"
         f"Tasks:\n{todo_list}\n\n"
-        f"Return ONLY a JSON array like:\n"
-        f'[{{"id": "...", "priority": 2, "category": "work", "notes": "..."}}]\n'
-        f"No markdown, no explanation."
+        f"Return ONLY a JSON array, no markdown, no explanation.\n"
+        f'Example: [{{"id": 3, "priority": "medium", "category": "health", "reasoning": "Routine appointment, no acute risk."}}]'
     )
 
     message = ai.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text.strip()
 
-    # 5. Strip markdown code blocks if present
+    # Strip markdown code blocks if present
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
@@ -66,44 +92,43 @@ def main():
         print(f"Raw response: {raw}")
         return
 
-    # 6. Update each todo in Supabase
+    # Update each todo in Supabase
     now = datetime.now(timezone.utc).isoformat()
     urgent_tasks = []
     updated = 0
 
     for item in results:
         todo_id = item.get("id")
-        priority = item.get("priority")
+        priority = item.get("priority", "medium")
         category = item.get("category", "general")
-        notes = item.get("notes", "")[:80]  # Enforce 80 char limit
+        reasoning = item.get("reasoning", "")[:80]
 
         if not todo_id:
             continue
 
         supa.table("todos").update({
             "priority": priority,
+            "priority_reasoning": reasoning,
             "category": category,
-            "notes": notes,
             "processed": 1,
             "updated_at": now,
         }).eq("id", todo_id).execute()
         updated += 1
 
-        if priority == 1:
-            # Find the original task text
+        if priority == "high":
             matching = [t for t in todos if str(t["id"]) == str(todo_id)]
             if matching:
                 urgent_tasks.append(matching[0]["text"])
 
     print(f"Updated {updated} tasks.")
 
-    # 7. Send ntfy for urgent tasks
+    # Send ntfy for high priority tasks
     for task_text in urgent_tasks:
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
             data=task_text.encode("utf-8"),
             headers={
-                "Title": "Urgent task!",
+                "Title": "High priority task",
                 "Priority": "high",
                 "Tags": "rotating_light",
             },
@@ -111,7 +136,7 @@ def main():
         )
         print(f"Sent urgent notification for: {task_text[:60]}")
 
-    print(f"Done. {updated} tasks prioritised, {len(urgent_tasks)} urgent notifications sent.")
+    print(f"Done. {updated} tasks prioritised, {len(urgent_tasks)} high-priority notifications sent.")
 
 
 if __name__ == "__main__":
