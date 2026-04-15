@@ -1,0 +1,20 @@
+name: Quarterly Todos
+
+on:
+  schedule:
+    - cron: '0 6 1 1,4,7,10 *'  # 08:00 CEST on 1 Jan, 1 Apr, 1 Jul, 1 Oct
+  workflow_dispatch:
+
+jobs:
+  create-todos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r scripts/requirements.txt
+      - run: python scripts/create_quarterly_todos.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
