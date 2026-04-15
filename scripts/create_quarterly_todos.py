@@ -44,8 +44,15 @@ def main():
 
     todos = [
         {
-            "text": f"OeNB 87Q Meldung {q_label} {q_year} — Download IBKR Activity Statement (CSV) und script ausführen",
-            "notes": f"Quartalsstichtag {quarter_end}.{q_year}. CSV von IBKR downloaden, in AIF Meldeformular Ordner ablegen, dann ibkr_oenb_87q.py ausführen. Pos. 1000000 / 1009000 / 1529000 ins OeNB Portal (myoenb.com) eingeben.",
+            "text": f"OeNB 87Q Meldung {q_label} {q_year} — IBKR CSV downloaden und script ausführen",
+            "notes": (
+                f"Quartalsstichtag {quarter_end}.{q_year}. "
+                f"IBKR: Reports → Activity → Custom Statement, Zeitraum ganzes Quartal, Format CSV. "
+                f"Folgende Sections einschließen: Net Asset Value, Deposits & Withdrawals, "
+                f"Mark-to-Market Performance Summary. "
+                f"CSV in AIF Meldeformular Ordner ablegen, dann ibkr_oenb_87q.py ausführen. "
+                f"Ergebnis (3 Werte) ins OeNB Portal eingeben: myoenb.com"
+            ),
         },
     ]
 
