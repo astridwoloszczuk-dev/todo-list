@@ -10,7 +10,7 @@ from supabase import create_client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")  # optional — skips intros if missing
 NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 
 # Ages used to calibrate tone in the personalised intro
@@ -170,7 +170,7 @@ def send_ntfy_summary(topic, people_summaries, total_todos):
 
 def main():
     supa = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
     today = date.today().isoformat()
 
     # Guard: skip if digest already ran today
