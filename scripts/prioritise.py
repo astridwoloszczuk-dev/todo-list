@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import anthropic
@@ -74,11 +75,19 @@ def main():
         f'Example: [{{"id": 3, "priority": "medium", "category": "health", "reasoning": "Routine appointment, no acute risk."}}]'
     )
 
-    message = ai.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    for attempt in range(3):
+        try:
+            message = ai.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            break
+        except Exception as e:
+            print(f"API attempt {attempt + 1} failed: {e}")
+            if attempt == 2:
+                raise
+            time.sleep(10)
     raw = message.content[0].text.strip()
 
     # Strip markdown code blocks if present

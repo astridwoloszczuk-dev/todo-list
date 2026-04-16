@@ -3,10 +3,12 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
+const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const POLL_INTERVAL_MS = 30_000;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -15,6 +17,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 }
 
 const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const ai = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
 
 // ── People cache (refreshed every 5 min) ────────────────────────────────────
 let _people = [];
@@ -66,18 +69,10 @@ async function send(client, number, message) {
 }
 
 // ── Assignment rules ─────────────────────────────────────────────────────────
-// Auto-accept: parent→child or self-assignment — no confirmation needed
 function isAutoAccept(sender, target) {
   if (sender.id === target.id) return true;
   if (sender.role === 'parent' && target.role === 'child') return true;
   return false;
-}
-
-// Parse "Name: task text" — returns {targetName, taskText} or null
-function parseAssignment(text) {
-  const match = text.match(/^(\w+)\s*:\s*(.+)$/s);
-  if (!match) return null;
-  return { targetName: match[1].trim(), taskText: match[2].trim() };
 }
 
 // ── Pending actions ──────────────────────────────────────────────────────────
@@ -112,12 +107,10 @@ async function buildReassignOptions(todo, justRefusedId) {
   const options = [];
   let num = 1;
 
-  // Creator can take it themselves (if they haven't refused)
   if (creator && !refusedIds.has(creator.id)) {
     options.push({ number: num++, label: `Take it myself (${creator.name})`, action: 'self' });
   }
 
-  // Everyone else who hasn't refused and isn't the person who just refused
   for (const p of people) {
     if (p.is_bot) continue;
     if (p.id === creator?.id) continue;
@@ -140,12 +133,10 @@ async function requestAcceptance(client, todo, assigner, target) {
 }
 
 // ── Handle a pending action response ────────────────────────────────────────
-// Returns true if the message was consumed as an action response
 async function handlePendingAction(client, person, text) {
   const pending = await getPendingAction(person.id);
   if (!pending) return false;
 
-  // Only treat as an action response if it's a short number (1-2 chars)
   const num = parseInt(text.trim(), 10);
   if (isNaN(num) || text.trim().length > 2) return false;
 
@@ -168,7 +159,6 @@ async function handlePendingAction(client, person, text) {
     await handleReassign(client, person, todo, option);
   }
 
-  // If they have more pending actions, prompt for the next one
   const next = await getPendingAction(person.id);
   if (next) {
     const { data: nextRows } = await supa.from('todos').select('*').eq('id', next.todo_id).limit(1);
@@ -255,7 +245,7 @@ async function handleReassign(client, person, todo, option) {
   }
 }
 
-// ── Self todo ────────────────────────────────────────────────────────────────
+// ── Todo operations ──────────────────────────────────────────────────────────
 async function addSelfTodo(client, person, text) {
   const { error } = await supa.from('todos').insert({
     text,
@@ -274,6 +264,158 @@ async function addSelfTodo(client, person, text) {
   await send(client, person.whatsapp_number, 'Got it ✓ Added to your todos.');
 }
 
+async function addAssignedTodo(client, person, targetName, taskText) {
+  const target = await findPersonByName(targetName);
+  if (!target || target.id === person.id) return false;
+
+  const autoAccept = isAutoAccept(person, target);
+  const { data: inserted, error } = await supa.from('todos').insert({
+    text: taskText,
+    created_by: person.id,
+    assigned_to: target.id,
+    assignment_status: autoAccept ? 'accepted' : 'pending',
+    status: 'pending',
+    processed: 0,
+  }).select().single();
+
+  if (error) {
+    console.error('Insert error:', error.message);
+    await send(client, person.whatsapp_number, 'Sorry, something went wrong.');
+    return true;
+  }
+
+  if (autoAccept) {
+    await send(client, person.whatsapp_number, `✅ Assigned to ${target.name}: "${taskText}"`);
+    if (target.whatsapp_number) {
+      await send(client, target.whatsapp_number, `📋 *${person.name}* assigned you: "${taskText}"`);
+    }
+  } else {
+    await send(client, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
+    await requestAcceptance(client, inserted, person, target);
+  }
+
+  console.log(`[${person.name}→${target.name}] ${autoAccept ? 'Auto-accepted' : 'Pending'}: ${taskText.slice(0, 50)}`);
+  return true;
+}
+
+// ── Completion: mark numbered todos as done ──────────────────────────────────
+// Format: pure numbers, e.g. "1", "1 3", "2 4 5"
+// Matches against today's digest order (high→medium→low)
+async function handleCompletion(client, person, numbers) {
+  const PRIORITY_ORDER = { high: 0, medium: 1, low: 2, someday: 3 };
+
+  const { data: todos } = await supa.from('todos')
+    .select('id, text, priority')
+    .eq('assigned_to', person.id)
+    .eq('status', 'pending')
+    .eq('assignment_status', 'accepted');
+
+  if (!todos?.length) {
+    await send(client, person.whatsapp_number, 'No pending todos to mark as done.');
+    return;
+  }
+
+  todos.sort((a, b) =>
+    (PRIORITY_ORDER[a.priority] ?? 99) - (PRIORITY_ORDER[b.priority] ?? 99)
+  );
+
+  const done = [];
+  const invalid = [];
+
+  for (const n of numbers) {
+    const idx = n - 1;
+    if (idx < 0 || idx >= todos.length) {
+      invalid.push(n);
+    } else {
+      done.push(todos[idx]);
+    }
+  }
+
+  if (!done.length) {
+    await send(client, person.whatsapp_number, `No matching todos (you have ${todos.length}).`);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  for (const t of done) {
+    await supa.from('todos').update({ status: 'done', updated_at: now }).eq('id', t.id);
+  }
+
+  const lines = done.map(t => `✅ ${t.text}`);
+  if (invalid.length) lines.push(`\n(Numbers not found: ${invalid.join(', ')})`);
+  await send(client, person.whatsapp_number, lines.join('\n'));
+  console.log(`[${person.name}] Completed ${done.length} todo(s): ${done.map(t => t.text.slice(0,30)).join(', ')}`);
+}
+
+// ── Claude brain: classify inbound intent ────────────────────────────────────
+// Uses prompt caching on the system prompt to keep costs low.
+
+const BRAIN_SYSTEM = `You are the inbox router for a family WhatsApp todo system. Your job is to classify each incoming message into exactly one intent.
+
+Intents:
+- add_todo: The person wants to add a task/todo for themselves (most common)
+- assign_todo: The message starts with a family member's name followed by a colon, e.g. "Max: clean room"
+- complete_todos: The message is purely numbers, e.g. "1", "1 3 5", "done 2" — marking todos as completed
+- diary: The message is about calendar, schedule, appointments, or events (adding, moving, cancelling)
+- unknown: Anything else (greetings, questions, gibberish)
+
+Family members: Astrid (mum), Niko (dad), Max (15), Alex (13), Vicky (11).
+
+Rules:
+- If the message is ONLY digits and spaces, intent is complete_todos
+- If it starts with a name + colon, intent is assign_todo
+- Calendar/diary/appointment/schedule words → intent is diary
+- Everything else is add_todo
+
+Respond with ONLY a JSON object, no explanation:
+{"intent": "add_todo", "task": "the todo text"}
+{"intent": "assign_todo", "target": "Max", "task": "clean your room"}
+{"intent": "complete_todos", "numbers": [1, 3]}
+{"intent": "diary", "request": "the original request text"}
+{"intent": "unknown"}`;
+
+async function classifyMessage(person, text) {
+  // Fast path: pure numbers — no API call needed
+  if (/^\d[\d\s]*$/.test(text.trim())) {
+    const numbers = text.trim().split(/\s+/).map(Number);
+    return { intent: 'complete_todos', numbers };
+  }
+
+  // Fast path: "Name: task" pattern — no API call needed
+  const assignMatch = text.match(/^(\w+)\s*:\s*(.+)$/s);
+  if (assignMatch) {
+    return { intent: 'assign_todo', target: assignMatch[1].trim(), task: assignMatch[2].trim() };
+  }
+
+  // Use Claude if available, otherwise default to add_todo
+  if (!ai) {
+    return { intent: 'add_todo', task: text };
+  }
+
+  try {
+    const response = await ai.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 100,
+      system: [
+        {
+          type: 'text',
+          text: BRAIN_SYSTEM,
+          cache_control: { type: 'ephemeral' },
+        }
+      ],
+      messages: [
+        { role: 'user', content: `Sender: ${person.name} (${person.role})\nMessage: ${text}` },
+      ],
+    });
+
+    const raw = response.content[0].text.trim();
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`Claude classification failed: ${e.message} — defaulting to add_todo`);
+    return { intent: 'add_todo', task: text };
+  }
+}
+
 // ── Main inbound handler ─────────────────────────────────────────────────────
 async function handleInbound(client, message) {
   const text = message.body.trim();
@@ -288,49 +430,43 @@ async function handleInbound(client, message) {
     return;
   }
 
-  // Pending action response takes priority (short digit reply)
+  // Pending action responses (numbered replies within an active dialogue) take priority
   const handled = await handlePendingAction(client, person, text);
   if (handled) return;
 
-  // Try cross-assignment "Name: task"
-  const parsed = parseAssignment(text);
-  if (parsed) {
-    const target = await findPersonByName(parsed.targetName);
-    if (target && target.id !== person.id) {
-      const autoAccept = isAutoAccept(person, target);
+  // Classify intent
+  const classified = await classifyMessage(person, text);
+  console.log(`[${person.name}] intent=${classified.intent} | "${text.slice(0, 60)}"`);
 
-      const { data: inserted, error } = await supa.from('todos').insert({
-        text: parsed.taskText,
-        created_by: person.id,
-        assigned_to: target.id,
-        assignment_status: autoAccept ? 'accepted' : 'pending',
-        status: 'pending',
-        processed: 0,
-      }).select().single();
+  switch (classified.intent) {
+    case 'complete_todos':
+      await handleCompletion(client, person, classified.numbers);
+      break;
 
-      if (error) {
-        console.error('Insert error:', error.message);
-        await send(client, person.whatsapp_number, 'Sorry, something went wrong.');
-        return;
+    case 'assign_todo': {
+      const assigned = await addAssignedTodo(client, person, classified.target, classified.task);
+      if (!assigned) {
+        // Target not found or is self — treat as self-todo with full text
+        await addSelfTodo(client, person, text);
       }
-
-      if (autoAccept) {
-        await send(client, person.whatsapp_number, `✅ Assigned to ${target.name}: "${parsed.taskText}"`);
-        if (target.whatsapp_number) {
-          await send(client, target.whatsapp_number, `📋 *${person.name}* assigned you: "${parsed.taskText}"`);
-        }
-      } else {
-        await send(client, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
-        await requestAcceptance(client, inserted, person, target);
-      }
-
-      console.log(`[${person.name}→${target.name}] ${autoAccept ? 'Auto-accepted' : 'Pending'}: ${parsed.taskText.slice(0, 50)}`);
-      return;
+      break;
     }
-  }
 
-  // Default: self-assign with full original text
-  await addSelfTodo(client, person, text);
+    case 'diary':
+      // Stub — full diary integration coming soon
+      await send(client, person.whatsapp_number,
+        '📅 Diary integration coming soon! For now, email claude.w.lowndes@gmail.com for calendar requests.');
+      console.log(`[${person.name}] Diary request (stub): ${text.slice(0, 60)}`);
+      break;
+
+    case 'add_todo':
+      await addSelfTodo(client, person, classified.task || text);
+      break;
+
+    default:
+      await addSelfTodo(client, person, text);
+      break;
+  }
 }
 
 // ── Outbound message queue ───────────────────────────────────────────────────
@@ -379,6 +515,11 @@ async function main() {
 
   client.on('ready', () => {
     console.log('WhatsApp connected and ready.');
+    if (ai) {
+      console.log('Claude brain: active (prompt caching on)');
+    } else {
+      console.log('Claude brain: disabled (no ANTHROPIC_API_KEY) — using pattern matching only');
+    }
     sendPending(client);
     setInterval(() => sendPending(client), POLL_INTERVAL_MS);
   });
