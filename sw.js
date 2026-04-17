@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'vtodo-v1';
+const CACHE = 'vtodo-v3';
 const BASE = '/voice-todo';
 const SHELL = [
   BASE + '/',
