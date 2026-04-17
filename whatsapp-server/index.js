@@ -397,6 +397,12 @@ async function classifyMessage(person, text) {
     return { intent: 'assign_todo', target: assignMatch[1].trim(), task: assignMatch[2].trim() };
   }
 
+  // Fast path: time or strong date signal → diary (no API call needed)
+  const diarySignals = /\b(\d{1,2}(:\d{2})?\s*(am|pm)|tomorrow|cancel\s|reschedule|move\s+\w+\s+to\b)\b/i;
+  if (diarySignals.test(text)) {
+    return { intent: 'diary', request: text };
+  }
+
   // Use Claude if available, otherwise default to add_todo
   if (!ai) {
     return { intent: 'add_todo', task: text };
