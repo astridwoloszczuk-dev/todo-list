@@ -108,10 +108,10 @@ function renderList() {
     .filter(i => !(i.assignment_status === 'pending' && i.added_by_name && i.added_by_name !== currentTab))
     .sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
-  const high   = normal.filter(i => i.priority >= 7);
-  const medium = normal.filter(i => i.priority >= 4 && i.priority < 7);
-  const low    = normal.filter(i => i.priority >= 1 && i.priority < 4);
-  const unprio = normal.filter(i => !i.priority)
+  const high   = normal.filter(i => i.priority === 'high'   || i.priority >= 7);
+  const medium = normal.filter(i => i.priority === 'medium' || (i.priority >= 4 && i.priority < 7));
+  const low    = normal.filter(i => i.priority === 'low' || i.priority === 'someday' || (i.priority >= 1 && i.priority < 4));
+  const unprio = normal.filter(i => !i.priority || i.priority === 'none')
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const waiting = [...items.values()].filter(i =>
@@ -144,7 +144,10 @@ function renderItem(item, cls = '') {
   const isPendingAccept = cls === 'pending-accept';
   const isExpanded      = String(item.id) === String(expandedId);
 
-  const currentPrioBand = item.priority >= 7 ? 'high' : item.priority >= 4 ? 'medium' : item.priority >= 1 ? 'low' : null;
+  const currentPrioBand = (item.priority === 'high'   || item.priority >= 7) ? 'high'
+    : (item.priority === 'medium' || (item.priority >= 4 && item.priority < 7)) ? 'medium'
+    : (item.priority === 'low' || item.priority === 'someday' || (item.priority >= 1 && item.priority < 4)) ? 'low'
+    : null;
 
   // Move-to pills
   const movePills = MEMBERS.map(name => {
