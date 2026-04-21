@@ -51,19 +51,13 @@
       box-shadow: 0 1px 3px rgba(0,0,0,.15);
     }
     .app-title { font-size: 1.05rem; font-weight: 700; }
-
     #user-badge {
       font-size: .8rem;
       background: rgba(255,255,255,.2);
-      border: none;
-      color: white;
-      padding: 4px 10px;
-      border-radius: 999px;
-      cursor: pointer;
-      max-width: 110px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      border: none; color: white;
+      padding: 4px 10px; border-radius: 999px;
+      cursor: pointer; max-width: 110px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     #user-badge:hover { background: rgba(255,255,255,.3); }
 
@@ -71,7 +65,7 @@
     .add-bar {
       background: white;
       border-bottom: 1px solid var(--gray-200);
-      padding: 10px 16px;
+      padding: 10px 16px 10px;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -86,8 +80,7 @@
       border: 1.5px solid var(--gray-200);
       border-radius: 10px;
       padding: 10px 14px;
-      font-size: 1rem;
-      outline: none;
+      font-size: 1rem; outline: none;
       background: var(--gray-50);
       transition: border-color .15s;
     }
@@ -96,11 +89,8 @@
 
     #mic-btn {
       width: 44px; min-width: 44px;
-      border: 1.5px solid var(--gray-200);
-      border-radius: 10px;
-      background: white;
-      color: var(--gray-400);
-      cursor: pointer;
+      border: 1.5px solid var(--gray-200); border-radius: 10px;
+      background: white; color: var(--gray-400); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: border-color .15s, color .15s, background .15s;
     }
@@ -114,84 +104,69 @@
       from { box-shadow: 0 0 0 0 rgba(220,38,38,.3); }
       to   { box-shadow: 0 0 0 6px rgba(220,38,38,0); }
     }
-
     #add-btn {
       width: 44px; min-width: 44px;
-      background: var(--green);
-      color: white;
-      border: none;
-      border-radius: 10px;
-      font-size: 1.5rem;
+      background: var(--green); color: white;
+      border: none; border-radius: 10px; font-size: 1.5rem;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: background .15s;
     }
     #add-btn:hover { background: #15803d; }
 
+    /* ── Assign pills (add bar) ── */
     .assign-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: .8rem;
-      color: var(--gray-600);
+      display: flex; gap: 6px; align-items: center;
     }
-    .assign-row label { white-space: nowrap; }
-    #assign-select {
-      flex: 1;
-      border: 1.5px solid var(--gray-200);
-      border-radius: 8px;
-      padding: 5px 8px;
-      font-size: .85rem;
-      background: var(--gray-50);
-      outline: none;
-      cursor: pointer;
+    .assign-label { font-size: .72rem; color: var(--gray-400); white-space: nowrap; }
+    .member-pill {
+      flex: 1; height: 28px;
+      border-radius: 999px; border: none;
+      font-size: .72rem; font-weight: 700;
+      color: white; cursor: pointer;
+      opacity: 0.35;
+      transition: opacity .15s, transform .1s;
     }
-    #assign-select:focus { border-color: var(--green); }
+    .member-pill.selected { opacity: 1; transform: scale(1.08); }
 
     /* ── List ── */
     main { flex: 1; padding: 12px 0 16px; }
-
-    #item-list {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
+    #item-list { list-style: none; display: flex; flex-direction: column; gap: 1px; }
 
     .section-header {
       padding: 10px 16px 4px;
-      font-size: .72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .06em;
+      font-size: .72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
       color: var(--gray-400);
     }
+    .section-header.high          { color: #dc2626; }
+    .section-header.medium        { color: var(--amber); }
+    .section-header.low           { color: var(--green); }
+    .section-header.unprio        { color: var(--gray-400); }
     .section-header.pending-accept { color: var(--amber); }
     .section-header.waiting        { color: var(--blue); }
 
-    .item {
+    /* ── Item ── */
+    .item-wrap {
       background: white;
-      display: flex;
-      align-items: center;
-      padding: 11px 16px;
-      gap: 10px;
+      display: flex; flex-direction: column;
       animation: slideIn .12s ease;
     }
-    .item:first-of-type { border-radius: 12px 12px 0 0; }
-    .item:last-of-type  { border-radius: 0 0 12px 12px; }
-    .item.waiting       { opacity: .7; }
-
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(-4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+    .item-main {
+      display: flex; align-items: center;
+      padding: 11px 16px; gap: 10px;
+      cursor: pointer;
+    }
+    .item-wrap.waiting .item-main { opacity: .7; }
 
     .check-btn {
       width: 26px; height: 26px; min-width: 26px;
-      border-radius: 50%;
-      border: 2px solid var(--gray-200);
-      background: white;
-      cursor: pointer;
+      border-radius: 50%; border: 2px solid var(--gray-200);
+      background: white; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       color: white;
       transition: border-color .15s, background .15s;
@@ -201,63 +176,77 @@
 
     .item-body { flex: 1; min-width: 0; }
     .item-name {
-      display: block;
-      font-size: .95rem;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      display: block; font-size: .95rem; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .item-meta {
-      display: block;
-      font-size: .72rem;
-      color: var(--gray-400);
-      margin-top: 2px;
-    }
+    .item-meta { display: block; font-size: .72rem; color: var(--gray-400); margin-top: 2px; }
 
     .badge {
-      font-size: .7rem;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 999px;
-      white-space: nowrap;
+      font-size: .7rem; font-weight: 700;
+      padding: 2px 6px; border-radius: 999px; white-space: nowrap;
     }
     .badge.prio   { background: var(--green-lt); color: var(--green); }
-    .badge.unprio { color: var(--gray-200); font-size: 1rem; font-weight: 400; }
+    .badge.unprio { color: var(--gray-200); font-size: 1rem; }
 
     .accept-btn {
-      font-size: .75rem;
-      font-weight: 600;
-      background: var(--amber);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 4px 8px;
-      cursor: pointer;
-      white-space: nowrap;
+      font-size: .75rem; font-weight: 600;
+      background: var(--amber); color: white;
+      border: none; border-radius: 6px; padding: 4px 8px;
+      cursor: pointer; white-space: nowrap;
     }
     .accept-btn:hover { background: #b45309; }
 
     .delete-btn {
-      width: 28px; height: 28px;
-      border-radius: 6px;
-      border: none;
-      background: transparent;
-      color: var(--gray-400);
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      opacity: 0;
-      transition: opacity .15s, background .15s, color .15s;
+      width: 28px; height: 28px; border-radius: 6px;
+      border: none; background: transparent; color: var(--gray-400);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity .15s, background .15s, color .15s;
     }
     .delete-btn svg { width: 14px; height: 14px; }
-    .item:hover .delete-btn { opacity: 1; }
+    .item-wrap:hover .delete-btn { opacity: 1; }
     .delete-btn:hover { background: #fee2e2; color: var(--red); }
+
+    /* ── Item actions (expanded) ── */
+    .item-actions {
+      display: none;
+      padding: 0 16px 12px 52px;
+      flex-direction: column; gap: 10px;
+      border-top: 1px solid var(--gray-100);
+    }
+    .item-actions.open { display: flex; }
+    .action-section { display: flex; flex-direction: column; gap: 6px; }
+    .action-label {
+      font-size: .68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--gray-400);
+    }
+    .action-pills { display: flex; gap: 5px; }
+    .move-pill {
+      width: 34px; height: 34px; border-radius: 50%; border: none;
+      font-size: .72rem; font-weight: 700; color: white;
+      cursor: pointer; opacity: 0.5;
+      transition: opacity .15s, transform .1s;
+    }
+    .move-pill:hover { opacity: 1; transform: scale(1.1); }
+    .move-pill.current { opacity: 1; box-shadow: 0 0 0 2px white, 0 0 0 4px currentColor; }
+    .prio-btns { display: flex; gap: 5px; }
+    .prio-btn {
+      flex: 1; padding: 6px 2px;
+      border-radius: 8px; border: 1.5px solid var(--gray-200);
+      font-size: .75rem; font-weight: 600; cursor: pointer;
+      background: white; transition: all .15s;
+    }
+    .prio-btn.high-p   { border-color: #dc2626; color: #dc2626; }
+    .prio-btn.medium-p { border-color: var(--amber); color: var(--amber); }
+    .prio-btn.low-p    { border-color: var(--green); color: var(--green); }
+    .prio-btn.clear-p  { color: var(--gray-400); }
+    .prio-btn.active-p.high-p   { background: #dc2626; color: white; }
+    .prio-btn.active-p.medium-p { background: var(--amber); color: white; }
+    .prio-btn.active-p.low-p    { background: var(--green); color: white; }
 
     /* ── Empty state ── */
     #empty-state {
-      text-align: center;
-      padding: 56px 24px;
-      color: var(--gray-400);
+      text-align: center; padding: 56px 24px; color: var(--gray-400);
     }
     #empty-state .empty-icon { font-size: 2.5rem; margin-bottom: 10px; }
     #empty-state p { font-size: .9rem; }
@@ -265,97 +254,62 @@
 
     /* ── Tab bar ── */
     .tab-bar {
-      position: fixed;
-      bottom: 0;
-      left: 0; right: 0;
+      position: fixed; bottom: 0; left: 0; right: 0;
       height: calc(var(--tab-h) + env(safe-area-inset-bottom));
       padding-bottom: env(safe-area-inset-bottom);
-      background: white;
-      border-top: 1px solid var(--gray-200);
-      display: flex;
-      z-index: 20;
+      background: white; border-top: 1px solid var(--gray-200);
+      display: flex; z-index: 20;
     }
     .tab-btn {
-      flex: 1;
-      border: none;
-      background: transparent;
-      color: var(--gray-400);
-      font-size: .75rem;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 3px;
-      transition: color .15s;
-      padding: 0;
+      flex: 1; border: none; background: transparent;
+      font-size: .7rem; font-weight: 500; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 3px; padding: 0;
+      color: var(--gray-400); transition: color .15s;
     }
-    .tab-btn .tab-initial {
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      background: var(--gray-100);
+    .tab-initial {
+      width: 30px; height: 30px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: .85rem;
-      font-weight: 700;
-      transition: background .15s, color .15s;
+      font-size: .8rem; font-weight: 700; color: white;
+      opacity: 0.3; transition: opacity .15s, transform .15s;
     }
-    .tab-btn.active { color: var(--green); }
-    .tab-btn.active .tab-initial { background: var(--green-lt); color: var(--green); }
+    .tab-btn.active .tab-initial { opacity: 1; transform: scale(1.1); }
+    .tab-btn.active { color: var(--gray-900); }
 
     /* ── User modal ── */
     .modal-backdrop {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,.4);
+      position: fixed; inset: 0; background: rgba(0,0,0,.4);
       display: flex; align-items: center; justify-content: center;
-      z-index: 100;
-      padding: 24px;
+      z-index: 100; padding: 24px;
     }
     .modal-backdrop.hidden { display: none; }
     .modal {
-      background: white;
-      border-radius: 16px;
-      padding: 28px 24px;
-      width: 100%; max-width: 340px;
-      box-shadow: 0 20px 60px rgba(0,0,0,.2);
+      background: white; border-radius: 16px; padding: 28px 24px;
+      width: 100%; max-width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,.2);
     }
     .modal h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; }
     .modal p  { font-size: .85rem; color: var(--gray-600); margin-bottom: 16px; }
-    .modal-names {
-      display: flex; flex-wrap: wrap; gap: 8px;
-      margin-bottom: 16px;
-    }
+    .modal-names { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .modal-name-btn {
       flex: 1; min-width: 80px;
-      border: 1.5px solid var(--gray-200);
-      border-radius: 10px;
-      padding: 8px;
-      font-size: .9rem;
-      font-weight: 500;
-      background: white;
-      cursor: pointer;
+      border: 1.5px solid var(--gray-200); border-radius: 10px;
+      padding: 8px; font-size: .9rem; font-weight: 500;
+      background: white; cursor: pointer;
       transition: border-color .15s, background .15s;
     }
     .modal-name-btn:hover { border-color: var(--green); background: var(--green-lt); color: var(--green); }
     .modal-divider { text-align: center; font-size: .8rem; color: var(--gray-400); margin-bottom: 12px; }
     .modal input {
-      width: 100%;
-      border: 1.5px solid var(--gray-200);
-      border-radius: 10px;
-      padding: 10px 14px;
-      font-size: 1rem;
-      outline: none;
-      margin-bottom: 12px;
+      width: 100%; border: 1.5px solid var(--gray-200); border-radius: 10px;
+      padding: 10px 14px; font-size: 1rem; outline: none; margin-bottom: 12px;
     }
     .modal input:focus { border-color: var(--green); }
-    .modal button.save-btn {
-      width: 100%;
-      background: var(--green); color: white;
-      border: none; border-radius: 10px;
-      padding: 12px; font-size: 1rem; font-weight: 600;
-      cursor: pointer;
+    .modal .save-btn {
+      width: 100%; background: var(--green); color: white;
+      border: none; border-radius: 10px; padding: 12px;
+      font-size: 1rem; font-weight: 600; cursor: pointer;
     }
-    .modal button.save-btn:hover { background: #15803d; }
+    .modal .save-btn:hover { background: #15803d; }
   </style>
 </head>
 <body>
@@ -381,14 +335,8 @@
       <button id="add-btn" aria-label="Add">+</button>
     </div>
     <div class="assign-row">
-      <label for="assign-select">For:</label>
-      <select id="assign-select">
-        <option>Astrid</option>
-        <option>Niko</option>
-        <option>Max</option>
-        <option>Alex</option>
-        <option>Vicky</option>
-      </select>
+      <span class="assign-label">For:</span>
+      <div id="assign-pills"></div>
     </div>
   </div>
 
@@ -401,42 +349,15 @@
     </div>
   </main>
 
-  <!-- Tab bar -->
-  <nav class="tab-bar">
-    <button class="tab-btn" data-member="Astrid">
-      <span class="tab-initial">A</span>
-      <span>Astrid</span>
-    </button>
-    <button class="tab-btn" data-member="Niko">
-      <span class="tab-initial">N</span>
-      <span>Niko</span>
-    </button>
-    <button class="tab-btn" data-member="Max">
-      <span class="tab-initial">M</span>
-      <span>Max</span>
-    </button>
-    <button class="tab-btn" data-member="Alex">
-      <span class="tab-initial">A</span>
-      <span>Alex</span>
-    </button>
-    <button class="tab-btn" data-member="Vicky">
-      <span class="tab-initial">V</span>
-      <span>Vicky</span>
-    </button>
-  </nav>
+  <!-- Tab bar (initials/colours injected by JS) -->
+  <nav class="tab-bar" id="tab-bar"></nav>
 
   <!-- Name modal -->
   <div id="user-modal" class="modal-backdrop hidden">
     <div class="modal">
       <h2>Who are you? 👋</h2>
       <p>Tap your name or type it below.</p>
-      <div class="modal-names">
-        <button class="modal-name-btn">Astrid</button>
-        <button class="modal-name-btn">Niko</button>
-        <button class="modal-name-btn">Max</button>
-        <button class="modal-name-btn">Alex</button>
-        <button class="modal-name-btn">Vicky</button>
-      </div>
+      <div class="modal-names" id="modal-names"></div>
       <div class="modal-divider">or type a name</div>
       <input id="user-name-input" type="text" placeholder="Your name" maxlength="30" />
       <button class="save-btn" id="user-save-btn">Save</button>
@@ -445,14 +366,5 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="./app.js"></script>
-  <script>
-    // Quick-pick name buttons in modal
-    document.querySelectorAll('.modal-name-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.getElementById('user-name-input').value = btn.textContent;
-        document.getElementById('user-save-btn').click();
-      });
-    });
-  </script>
 </body>
 </html>
