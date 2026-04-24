@@ -684,6 +684,38 @@ async function handleDiary(client, person, text) {
   console.log(`[${person.name}] Diary: ${action} → ${reply.slice(0, 60)}`);
 }
 
+// ── Birthday "done" reply ────────────────────────────────────────────────────
+async function handleBirthdayDone(client, person) {
+  const todayMMDD = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }).slice(5); // MM-DD
+  const todayISO  = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }); // YYYY-MM-DD
+
+  // Find birthdays today where this person is a reminder recipient and hasn't acked yet
+  const { data: bdayRows } = await supa
+    .from('birthdays').select('id, name').eq('birth_date', todayMMDD);
+  if (!bdayRows?.length) return false;
+
+  const confirmed = [];
+  for (const bday of bdayRows) {
+    const { data: rem } = await supa.from('birthday_reminders')
+      .select('person_name').eq('birthday_id', bday.id).eq('person_name', person.name);
+    if (!rem?.length) continue;
+
+    const { data: ack } = await supa.from('birthday_acks')
+      .select('id').eq('birthday_id', bday.id).eq('ack_date', todayISO).eq('acked_by', person.name);
+    if (ack?.length) continue; // already acked
+
+    await supa.from('birthday_acks').insert({
+      birthday_id: bday.id, ack_date: todayISO, acked_by: person.name,
+    });
+    confirmed.push(bday.name);
+  }
+
+  if (!confirmed.length) return false;
+  await send(client, person.whatsapp_number, `🎂 Great, marked as done for: ${confirmed.join(', ')}!`);
+  console.log(`[${person.name}] Birthday ack via WhatsApp: ${confirmed.join(', ')}`);
+  return true;
+}
+
 // ── Main inbound handler ─────────────────────────────────────────────────────
 async function handleInbound(client, message) {
   const text = message.body.trim();
@@ -701,6 +733,12 @@ async function handleInbound(client, message) {
   // Pending action responses (numbered replies within an active dialogue) take priority
   const handled = await handlePendingAction(client, person, text);
   if (handled) return;
+
+  // Fast-path: "done" → check for birthday acks before full classification
+  if (/^done\.?$/i.test(text)) {
+    const bdayHandled = await handleBirthdayDone(client, person);
+    if (bdayHandled) return;
+  }
 
   // Classify intent
   const classified = await classifyMessage(person, text);
