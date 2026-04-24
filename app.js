@@ -33,7 +33,8 @@ const blurbCard   = document.getElementById('blurb-card');
 const birthdaysEl = document.getElementById('birthdays');
 const bdayListEl  = document.getElementById('bday-list');
 const bdayNameIn  = document.getElementById('bday-name-input');
-const bdayDateIn  = document.getElementById('bday-date-input');
+const bdayDayIn   = document.getElementById('bday-day-input');
+const bdayMonthIn = document.getElementById('bday-month-input');
 const bdayNotesIn = document.getElementById('bday-notes-input');
 const bdayAddBtn  = document.getElementById('bday-add-btn');
 const bdayPillsEl = document.getElementById('bday-remind-pills');
@@ -70,6 +71,14 @@ bdayTabBtn.innerHTML = `<span style="font-size:1.3rem;line-height:1.2">🎂</spa
 bdayTabBtn.addEventListener('click', () => setTab('birthdays'));
 tabBar.appendChild(bdayTabBtn);
 
+// Populate day dropdown 1–31
+for (let d = 1; d <= 31; d++) {
+  const opt = document.createElement('option');
+  opt.value = String(d).padStart(2, '0');
+  opt.textContent = d;
+  bdayDayIn.appendChild(opt);
+}
+
 // Build remind pills (one per MEMBER, toggleable)
 let remindSelected = new Set([currentUser].filter(Boolean));
 MEMBERS.forEach(name => {
@@ -99,6 +108,12 @@ function bdayDaysUntil(mmdd) {
   const today = new Date(); today.setHours(0,0,0,0);
   const next = bdayNextDate(mmdd); next.setHours(0,0,0,0);
   return Math.round((next - today) / 86400000);
+}
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatBdayDate(mmdd) {
+  const [m, d] = mmdd.split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]}`;
 }
 
 async function loadBirthdays() {
@@ -134,7 +149,7 @@ function renderBirthdays() {
     card.innerHTML = `
       <div class="bday-info">
         <div class="bday-name">${escapeHtml(b.name)}</div>
-        <div class="bday-meta">${b.birth_date}${b.notes ? ' · ' + escapeHtml(b.notes) : ''}</div>
+        <div class="bday-meta">${formatBdayDate(b.birth_date)}${b.notes ? ' · ' + escapeHtml(b.notes) : ''}</div>
       </div>
       <span class="bday-countdown ${countdownClass}">${countdownText}</span>
       ${(isToday || isTomorrow) ? `<button class="bday-ack-btn${acked ? ' acked' : ''}" data-id="${b.id}">${acked ? 'Done ✓' : 'Done'}</button>` : ''}
@@ -162,20 +177,19 @@ function renderBirthdays() {
 bdayAddBtn.addEventListener('click', async () => {
   if (!currentUser) { showUserModal(); return; }
   const name = bdayNameIn.value.trim();
-  const date = bdayDateIn.value.trim();
-  if (!name || !date || !/^\d{2}-\d{2}$/.test(date)) {
-    bdayDateIn.focus(); return;
-  }
+  const month = bdayMonthIn.value;
+  const day   = bdayDayIn.value;
+  if (!name || !month || !day) { bdayNameIn.focus(); return; }
+  const date = `${month}-${day}`;
   const { data, error } = await db.from('birthdays').insert({ name, birth_date: date, notes: bdayNotesIn.value.trim() || null, created_by: currentUser }).select().single();
   if (error || !data) return;
   if (remindSelected.size) {
     const rows = [...remindSelected].map(p => ({ birthday_id: data.id, person_name: p }));
     await db.from('birthday_reminders').insert(rows);
   }
-  bdayNameIn.value = ''; bdayDateIn.value = ''; bdayNotesIn.value = '';
+  bdayNameIn.value = ''; bdayDayIn.value = ''; bdayMonthIn.value = ''; bdayNotesIn.value = '';
 });
-bdayNameIn.addEventListener('keydown', e => e.key === 'Enter' && bdayDateIn.focus());
-bdayDateIn.addEventListener('keydown', e => e.key === 'Enter' && bdayAddBtn.click());
+bdayNameIn.addEventListener('keydown', e => e.key === 'Enter' && bdayMonthIn.focus());
 
 // ── User setup ────────────────────────────────────────────────────────────────
 function showUserModal() { userModal.classList.remove('hidden'); userNameEl.focus(); }

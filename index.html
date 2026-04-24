@@ -424,7 +424,18 @@
   <div id="birthdays" class="hidden">
     <div class="bday-add-form">
       <input id="bday-name-input"  type="text" placeholder="Name…" autocomplete="off" />
-      <input id="bday-date-input"  type="text" placeholder="Date (MM-DD, e.g. 03-15)" autocomplete="off" />
+      <div style="display:flex;gap:8px">
+        <select id="bday-day-input" style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:1rem;outline:none;font-family:inherit;background:var(--gray-50)">
+          <option value="">Day</option>
+        </select>
+        <select id="bday-month-input" style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:1rem;outline:none;font-family:inherit;background:var(--gray-50)">
+          <option value="">Month</option>
+          <option value="01">January</option><option value="02">February</option><option value="03">March</option>
+          <option value="04">April</option><option value="05">May</option><option value="06">June</option>
+          <option value="07">July</option><option value="08">August</option><option value="09">September</option>
+          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
       <input id="bday-notes-input" type="text" placeholder="Notes (optional)" autocomplete="off" />
       <div class="bday-remind-row">
         <span class="bday-remind-label">Remind</span>
