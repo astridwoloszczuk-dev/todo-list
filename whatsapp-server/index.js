@@ -74,7 +74,9 @@ async function resolveNumber(message) {
 
 // ── Messaging ────────────────────────────────────────────────────────────────
 async function send(client, number, message) {
-  await client.sendMessage(e164ToWaId(number), message);
+  const numberId = await client.getNumberId(number.replace('+', ''));
+  const chatId = numberId ? numberId._serialized : e164ToWaId(number);
+  await client.sendMessage(chatId, message);
 }
 
 // ── Assignment rules ─────────────────────────────────────────────────────────
