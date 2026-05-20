@@ -29,7 +29,6 @@ const userNameEl  = document.getElementById('user-name-input');
 const userSaveBtn = document.getElementById('user-save-btn');
 const tabBar      = document.getElementById('tab-bar');
 const modalNames  = document.getElementById('modal-names');
-const blurbCard   = document.getElementById('blurb-card');
 const birthdaysEl = document.getElementById('birthdays');
 const bdayListEl  = document.getElementById('bday-list');
 const bdayNameIn  = document.getElementById('bday-name-input');
@@ -208,23 +207,6 @@ userSaveBtn.addEventListener('click', saveUser);
 userNameEl.addEventListener('keydown', e => e.key === 'Enter' && saveUser());
 userBadge.addEventListener('click', () => { userNameEl.value = currentUser || ''; showUserModal(); });
 
-// ── Blurb ─────────────────────────────────────────────────────────────────────
-async function loadBlurb(name) {
-  const { data } = await db
-    .from('person_blurbs')
-    .select('blurb, updated_at')
-    .eq('person_name', name)
-    .maybeSingle();
-  if (data?.blurb) {
-    blurbCard.textContent = data.blurb;
-    blurbCard.classList.add('visible');
-    blurbCard.classList.remove('hidden');
-  } else {
-    blurbCard.textContent = '';
-    blurbCard.classList.remove('visible');
-  }
-}
-
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function setTab(name) {
   currentTab = name;
@@ -235,8 +217,6 @@ function setTab(name) {
 
   if (name === 'birthdays') {
     addBarEl.classList.add('hidden');
-    blurbCard.classList.add('hidden');
-    blurbCard.classList.remove('visible');
     mainEl.classList.add('hidden');
     birthdaysEl.classList.remove('hidden');
     renderBirthdays();
@@ -244,11 +224,9 @@ function setTab(name) {
     addTarget = name;
     localStorage.setItem('todos_tab', name);
     addBarEl.classList.remove('hidden');
-    blurbCard.classList.remove('hidden');
     mainEl.classList.remove('hidden');
     birthdaysEl.classList.add('hidden');
     renderList();
-    loadBlurb(name);
   }
 }
 
@@ -282,10 +260,11 @@ function renderList() {
     .filter(i => !(i.assignment_status === 'pending' && i.added_by_name && i.added_by_name !== currentTab))
     .sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
-  const high   = normal.filter(i => i.priority === 'high'   || i.priority >= 7);
-  const medium = normal.filter(i => i.priority === 'medium' || (i.priority >= 4 && i.priority < 7));
-  const low    = normal.filter(i => i.priority === 'low' || i.priority === 'someday' || (i.priority >= 1 && i.priority < 4));
-  const unprio = normal.filter(i => !i.priority || i.priority === 'none')
+  const q1    = normal.filter(i => i.priority >= 8);
+  const q2    = normal.filter(i => i.priority >= 6 && i.priority < 8);
+  const q3    = normal.filter(i => i.priority >= 4 && i.priority < 6);
+  const q4    = normal.filter(i => i.priority >= 1 && i.priority < 4);
+  const unprio = normal.filter(i => !i.priority || i.priority <= 0)
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const waiting = [...items.values()].filter(i =>
@@ -295,10 +274,11 @@ function renderList() {
     i.status !== 'done' && i.status !== 'deleted'
   );
 
-  if (high.length)           renderSection('High priority', high, 'high');
-  if (medium.length)         renderSection('Medium priority', medium, 'medium');
-  if (low.length)            renderSection('Low priority', low, 'low');
-  if (unprio.length)         renderSection('Not yet prioritised', unprio, 'unprio');
+  if (q1.length)     renderSection('Urgent & Important', q1, 'q1');
+  if (q2.length)     renderSection('Non-Urgent & Important', q2, 'q2');
+  if (q3.length)     renderSection('Non-Urgent & Non-Important', q3, 'q3');
+  if (q4.length)     renderSection('Urgent & Non-Important', q4, 'q4');
+  if (unprio.length) renderSection('Not yet prioritised', unprio, 'unprio');
   if (pendingAccept.length)  renderSection('Needs your acceptance', pendingAccept, 'pending-accept');
   if (waiting.length)        renderSection('Waiting for acceptance', waiting, 'waiting');
 
@@ -318,9 +298,10 @@ function renderItem(item, cls = '') {
   const isPendingAccept = cls === 'pending-accept';
   const isExpanded      = String(item.id) === String(expandedId);
 
-  const currentPrioBand = (item.priority === 'high'   || item.priority >= 7) ? 'high'
-    : (item.priority === 'medium' || (item.priority >= 4 && item.priority < 7)) ? 'medium'
-    : (item.priority === 'low' || item.priority === 'someday' || (item.priority >= 1 && item.priority < 4)) ? 'low'
+  const currentPrioBand = item.priority >= 8 ? 'q1'
+    : item.priority >= 6 ? 'q2'
+    : item.priority >= 4 ? 'q3'
+    : item.priority >= 1 ? 'q4'
     : null;
 
   // Move-to pills
@@ -329,17 +310,19 @@ function renderItem(item, cls = '') {
     return `<button class="move-pill${isCurrent ? ' current' : ''}" style="background:${COLORS[name]};color:white" data-move="${item.id}" data-to="${name}">${INITIALS[name]}</button>`;
   }).join('');
 
-  // Priority buttons
+  // Priority buttons (Eisenhower Matrix)
   const prioBtns = [
-    { label: 'High', cls: 'high-p', val: 9 },
-    { label: 'Medium', cls: 'medium-p', val: 6 },
-    { label: 'Low', cls: 'low-p', val: 3 },
-    { label: 'Clear', cls: 'clear-p', val: 0 },
-  ].map(({ label, cls: pc, val }) => {
-    const isActive = (pc === 'high-p' && currentPrioBand === 'high') ||
-                     (pc === 'medium-p' && currentPrioBand === 'medium') ||
-                     (pc === 'low-p' && currentPrioBand === 'low');
-    return `<button class="prio-btn ${pc}${isActive ? ' active-p' : ''}" data-prio="${item.id}" data-val="${val}">${label}</button>`;
+    { label: 'U+I',   cls: 'q1-p',    val: 9, title: 'Urgent & Important' },
+    { label: 'Imp',   cls: 'q2-p',    val: 7, title: 'Non-Urgent & Important' },
+    { label: 'Later', cls: 'q3-p',    val: 5, title: 'Non-Urgent & Non-Important' },
+    { label: 'Urg',   cls: 'q4-p',    val: 3, title: 'Urgent & Non-Important' },
+    { label: '—',     cls: 'clear-p', val: 0, title: 'Clear priority' },
+  ].map(({ label, cls: pc, val, title }) => {
+    const isActive = (pc === 'q1-p' && currentPrioBand === 'q1') ||
+                     (pc === 'q2-p' && currentPrioBand === 'q2') ||
+                     (pc === 'q3-p' && currentPrioBand === 'q3') ||
+                     (pc === 'q4-p' && currentPrioBand === 'q4');
+    return `<button class="prio-btn ${pc}${isActive ? ' active-p' : ''}" data-prio="${item.id}" data-val="${val}" title="${title}">${label}</button>`;
   }).join('');
 
   const wrap = document.createElement('li');
@@ -354,7 +337,11 @@ function renderItem(item, cls = '') {
         <span class="item-name">${escapeHtml(item.text)}</span>
         <span class="item-meta">${item.added_by_name ? escapeHtml(item.added_by_name) : ''}${isWaiting ? ` → ${escapeHtml(item.owner)}` : ''}${item.created_at ? ' · ' + timeAgo(item.created_at) : ''}${item.category ? ' · ' + escapeHtml(item.category) : ''}</span>
       </div>
-      ${item.priority ? `<span class="badge prio">${item.priority}</span>` : '<span class="badge unprio">—</span>'}
+      ${item.priority >= 8 ? `<span class="badge q1-badge">U+I</span>`
+        : item.priority >= 6 ? `<span class="badge q2-badge">Imp</span>`
+        : item.priority >= 4 ? `<span class="badge q3-badge">Later</span>`
+        : item.priority >= 1 ? `<span class="badge q4-badge">Urg</span>`
+        : '<span class="badge unprio">—</span>'}
       ${isPendingAccept ? `<button class="accept-btn" data-accept="${item.id}">Accept</button>` : ''}
       <button class="delete-btn" data-delete="${item.id}" aria-label="Delete">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

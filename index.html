@@ -128,20 +128,6 @@
     }
     .member-pill.selected { opacity: 1; transform: scale(1.08); }
 
-    /* ── Blurb ── */
-    #blurb-card {
-      margin: 12px 16px 0;
-      background: white;
-      border-radius: 12px;
-      padding: 12px 14px;
-      font-size: .85rem;
-      color: var(--gray-600);
-      line-height: 1.5;
-      border-left: 3px solid var(--green);
-      display: none;
-    }
-    #blurb-card.visible { display: block; }
-
     /* ── List ── */
     main { flex: 1; padding: 12px 0 16px; }
     #item-list { list-style: none; display: flex; flex-direction: column; gap: 1px; }
@@ -152,10 +138,11 @@
       text-transform: uppercase; letter-spacing: .06em;
       color: var(--gray-400);
     }
-    .section-header.high          { color: #dc2626; }
-    .section-header.medium        { color: var(--amber); }
-    .section-header.low           { color: var(--green); }
-    .section-header.unprio        { color: var(--gray-400); }
+    .section-header.q1             { color: #dc2626; }
+    .section-header.q2             { color: var(--blue); }
+    .section-header.q3             { color: var(--gray-400); }
+    .section-header.q4             { color: var(--amber); }
+    .section-header.unprio         { color: var(--gray-400); }
     .section-header.pending-accept { color: var(--amber); }
     .section-header.waiting        { color: var(--blue); }
 
@@ -198,8 +185,11 @@
       font-size: .7rem; font-weight: 700;
       padding: 2px 6px; border-radius: 999px; white-space: nowrap;
     }
-    .badge.prio   { background: var(--green-lt); color: var(--green); }
-    .badge.unprio { color: var(--gray-200); font-size: 1rem; }
+    .badge.q1-badge { background: #fee2e2; color: #dc2626; }
+    .badge.q2-badge { background: #dbeafe; color: var(--blue); }
+    .badge.q3-badge { background: var(--gray-100); color: var(--gray-400); }
+    .badge.q4-badge { background: #fef3c7; color: var(--amber); }
+    .badge.unprio   { color: var(--gray-200); font-size: 1rem; }
 
     .accept-btn {
       font-size: .75rem; font-weight: 600;
@@ -249,13 +239,15 @@
       font-size: .75rem; font-weight: 600; cursor: pointer;
       background: white; transition: all .15s;
     }
-    .prio-btn.high-p   { border-color: #dc2626; color: #dc2626; }
-    .prio-btn.medium-p { border-color: var(--amber); color: var(--amber); }
-    .prio-btn.low-p    { border-color: var(--green); color: var(--green); }
-    .prio-btn.clear-p  { color: var(--gray-400); }
-    .prio-btn.active-p.high-p   { background: #dc2626; color: white; }
-    .prio-btn.active-p.medium-p { background: var(--amber); color: white; }
-    .prio-btn.active-p.low-p    { background: var(--green); color: white; }
+    .prio-btn.q1-p    { border-color: #dc2626; color: #dc2626; }
+    .prio-btn.q2-p    { border-color: var(--blue); color: var(--blue); }
+    .prio-btn.q3-p    { border-color: var(--gray-400); color: var(--gray-400); }
+    .prio-btn.q4-p    { border-color: var(--amber); color: var(--amber); }
+    .prio-btn.clear-p { color: var(--gray-400); }
+    .prio-btn.active-p.q1-p { background: #dc2626; color: white; }
+    .prio-btn.active-p.q2-p { background: var(--blue); color: white; }
+    .prio-btn.active-p.q3-p { background: var(--gray-400); color: white; }
+    .prio-btn.active-p.q4-p { background: var(--amber); color: white; }
 
     /* ── Empty state ── */
     #empty-state {
@@ -294,7 +286,6 @@
     #birthdays.hidden { display: none; }
     main.hidden { display: none; }
     .add-bar.hidden { display: none; }
-    #blurb-card.hidden { display: none; }
 
     .bday-add-form {
       background: white; border-radius: 12px; padding: 14px;
@@ -407,9 +398,6 @@
     </button>
     <button id="add-btn" aria-label="Add">+</button>
   </div>
-
-  <!-- Blurb card (populated from person_blurbs table) -->
-  <div id="blurb-card"></div>
 
   <!-- List -->
   <main>
