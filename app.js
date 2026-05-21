@@ -264,7 +264,7 @@ function renderList() {
   const q2    = normal.filter(i => i.priority >= 6 && i.priority < 8);
   const q3    = normal.filter(i => i.priority >= 4 && i.priority < 6);
   const q4    = normal.filter(i => i.priority >= 1 && i.priority < 4);
-  const unprio = normal.filter(i => !i.priority || i.priority <= 0)
+  const unprio = normal.filter(i => !(i.priority >= 1))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const waiting = [...items.values()].filter(i =>
