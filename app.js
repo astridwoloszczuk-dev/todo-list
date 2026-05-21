@@ -1,6 +1,6 @@
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL  = 'https://mezayharkjyvnnhvdlww.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1lemF5aGFya2p5dm5uaHZkbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYwOTE2ODQsImV4cCI6MjA5MTY2NzY4NH0.GlyIlgobMa0lVjEhH59-Zu1mt3f_usAipFNsg0bJSqE';
+const SUPABASE_ANON = 'sb_publishable_bw3Kcni9Yc88BWLp6G93Gg_HIGbqOKF';
 
 const MEMBERS = ['Astrid', 'Niko', 'Max', 'Alex', 'Vicky', 'Astrid & Niko'];
 const COLORS  = { Astrid: '#d97706', Niko: '#dc2626', Max: '#16a34a', Alex: '#2563eb', Vicky: '#db2777', 'Astrid & Niko': '#7c3aed' };
