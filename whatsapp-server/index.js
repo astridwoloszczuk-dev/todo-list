@@ -361,30 +361,36 @@ async function handleCompletion(client, person, numbers) {
 // ── Claude brain: classify inbound intent ────────────────────────────────────
 // Uses prompt caching on the system prompt to keep costs low.
 
-const BRAIN_SYSTEM = `You are the inbox router for a family WhatsApp todo system. Your job is to classify each incoming message into exactly one intent.
+const BRAIN_SYSTEM = `You are the inbox router for a family WhatsApp assistant. Classify each message into exactly one intent.
 
 Intents:
-- add_todo: The person wants to add a task/todo for themselves (most common)
-- assign_todo: The message starts with a family member's name followed by a colon, e.g. "Max: clean room"
-- complete_todos: The message is purely numbers, e.g. "1", "1 3 5", "done 2" — marking todos as completed
-- diary: The message is about scheduling something at a specific time or date (appointments, events, meetings)
-- unknown: Anything else (greetings, questions, gibberish)
+- add_todo: A task to do later with no specific time ("buy milk", "call the plumber", "book a haircut")
+- assign_todo: Starts with a family member name + colon, e.g. "Max: clean room"
+- complete_todos: Purely numbers marking todos as done, e.g. "1", "1 3 5"
+- diary: Creating, moving, or cancelling a calendar EVENT at a specific time/date
+- reminder: Wants a WhatsApp ping at a specific time — NOT a calendar event ("remind me at 3pm to...", "ping me in an hour about...", "don't let me forget tonight to...")
+- message_person: Wants to send a message to another family member ("tell Niko dinner is at 7", "ask Max if he has homework", "let Vicky know I'll be late")
+- answer: Anything requiring an actual response — questions, research, recommendations, advice, drafts, general chat ("what monitor should I buy", "find hotels in Japan", "draft an email to the school", "how do I...")
 
-Family members: Astrid (mum), Niko (dad), Max (15), Alex (13), Vicky (11).
+Family members: Astrid (mum), Niko (dad), Max (15), Alex (13), Vicky (11). Vienna, Austria.
 
 Rules:
-- If the message is ONLY digits and spaces, intent is complete_todos
-- If it starts with a name + colon, intent is assign_todo
-- DIARY signals (any of these → diary): a time like 3pm/10:30, a day like monday/friday/thursday, words like appointment/meeting/calendar/dentist/doctor/school/party/dinner/lunch/flight/holiday/cancel/move/reschedule
-- Todos are open-ended tasks with no specific time, e.g. "buy milk", "call the plumber"
-- When in doubt between todo and diary: if there's a time or date, it's diary
+- Pure digits/spaces → complete_todos
+- Starts with name + colon → assign_todo
+- DIARY: creating/moving/cancelling a calendar event with a time or date
+- REMINDER: "remind me", "ping me", "don't let me forget", "in X hours/minutes" → even if it has a time, it's a reminder not a diary entry
+- TODO: open-ended task, no time pressure, no response needed
+- ANSWER: anything that needs James to actually reply with information or content
+- When unsure between todo and answer: if they'd expect a reply, it's answer
 
-Respond with ONLY a JSON object, no explanation:
+Respond with ONLY a JSON object:
 {"intent": "add_todo", "task": "the todo text"}
 {"intent": "assign_todo", "target": "Max", "task": "clean your room"}
 {"intent": "complete_todos", "numbers": [1, 3]}
 {"intent": "diary", "request": "the original request text"}
-{"intent": "unknown"}`;
+{"intent": "reminder", "request": "the original request text"}
+{"intent": "message_person", "target": "Niko", "message": "dinner is at 7"}
+{"intent": "answer", "request": "the original request text"}`;
 
 async function classifyMessage(person, text) {
   // Fast path: pure numbers — no API call needed
@@ -686,6 +692,92 @@ async function handleDiary(client, person, text) {
   console.log(`[${person.name}] Diary: ${action} → ${reply.slice(0, 60)}`);
 }
 
+// ── Answer: general questions, research, drafts ──────────────────────────────
+const ANSWER_SYSTEM = `You are James, a family AI assistant reached via WhatsApp.
+Family: Astrid (mum), Niko (dad), Victoria/Vicky (11), Alexander/Alex (13), Maximilian/Max (15). Vienna, Austria, 1130 Hietzing.
+Keep replies concise and WhatsApp-friendly. Short paragraphs. Bullet points (•) for lists. No # headers. No preamble like "Sure!" or "Great question".
+For research (hotels, restaurants, products): 3-5 concrete options with the key deciding details.
+For email/message drafts: write the complete text, clearly marked with "--- Draft ---".
+Answer in the same language the message was written in.`;
+
+async function handleAnswer(client, person, text) {
+  const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/Vienna', dateStyle: 'full', timeStyle: 'short' });
+  try {
+    const response = await ai.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: `${ANSWER_SYSTEM}\nCurrent date/time: ${now}\nSpeaking with: ${person.name}`,
+      messages: [{ role: 'user', content: text }],
+    });
+    const reply = response.content[0].text.trim();
+    await send(client, person.whatsapp_number, reply);
+    console.log(`[${person.name}] Answer: ${reply.slice(0, 80)}`);
+  } catch (e) {
+    console.error(`[${person.name}] Answer error: ${e.message}`);
+    await send(client, person.whatsapp_number, "Sorry, I couldn't get an answer right now. Try again?");
+  }
+}
+
+// ── Reminders ────────────────────────────────────────────────────────────────
+async function handleReminder(client, person, text) {
+  const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/Vienna', dateStyle: 'full', timeStyle: 'short' });
+  try {
+    const response = await ai.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: `Parse this reminder request. Current time: ${now} Vienna (Europe/Vienna timezone).
+Request: "${text}"
+Return ONLY JSON: {"remind_at": "ISO8601 datetime in UTC", "message": "concise reminder text", "reply": "friendly confirmation (include the time in Vienna local time)"}
+If time is ambiguous, default to 1 hour from now.` }],
+    });
+    let raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const parsed = JSON.parse(raw);
+    await supa.from('reminders').insert({
+      person_id: person.id,
+      message: parsed.message,
+      remind_at: parsed.remind_at,
+    });
+    await send(client, person.whatsapp_number, `⏰ ${parsed.reply || "Got it, I'll remind you!"}`);
+    console.log(`[${person.name}] Reminder set: "${parsed.message}" at ${parsed.remind_at}`);
+  } catch (e) {
+    console.error(`[${person.name}] Reminder error: ${e.message}`);
+    await send(client, person.whatsapp_number, "Sorry, I couldn't set that reminder. Try: \"remind me at 3pm to call the dentist\"");
+  }
+}
+
+async function checkReminders(client) {
+  try {
+    const now = new Date().toISOString();
+    const { data: due } = await supa
+      .from('reminders')
+      .select('*, people(whatsapp_number, name)')
+      .eq('sent', false)
+      .lte('remind_at', now);
+    if (!due?.length) return;
+    for (const r of due) {
+      const whatsapp = r.people?.whatsapp_number;
+      if (!whatsapp) continue;
+      await send(client, whatsapp, `⏰ Reminder: ${r.message}`);
+      await supa.from('reminders').update({ sent: true, sent_at: new Date().toISOString() }).eq('id', r.id);
+      console.log(`[Reminder→${r.people.name}] ${r.message}`);
+    }
+  } catch (e) {
+    console.error('Reminder poll error:', e.message);
+  }
+}
+
+// ── Message a family member ───────────────────────────────────────────────────
+async function handleMessagePerson(client, person, classified) {
+  const target = await findPersonByName(classified.target);
+  if (!target || !target.whatsapp_number) {
+    await send(client, person.whatsapp_number, `Sorry, I don't have WhatsApp set up for ${classified.target}.`);
+    return;
+  }
+  await send(client, target.whatsapp_number, `📩 *${person.name}:* ${classified.message}`);
+  await send(client, person.whatsapp_number, `✅ Sent to ${target.name}.`);
+  console.log(`[${person.name}→${target.name}] "${classified.message.slice(0, 60)}"`);
+}
+
 // ── Birthday "done" reply ────────────────────────────────────────────────────
 async function handleBirthdayDone(client, person) {
   const todayMMDD = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }).slice(5); // MM-DD
@@ -754,7 +846,6 @@ async function handleInbound(client, message) {
     case 'assign_todo': {
       const assigned = await addAssignedTodo(client, person, classified.target, classified.task);
       if (!assigned) {
-        // Target not found or is self — treat as self-todo with full text
         await addSelfTodo(client, person, text);
       }
       break;
@@ -768,8 +859,17 @@ async function handleInbound(client, message) {
       await addSelfTodo(client, person, classified.task || text);
       break;
 
+    case 'reminder':
+      await handleReminder(client, person, classified.request || text);
+      break;
+
+    case 'message_person':
+      await handleMessagePerson(client, person, classified);
+      break;
+
+    case 'answer':
     default:
-      await addSelfTodo(client, person, text);
+      await handleAnswer(client, person, classified.request || text);
       break;
   }
 }
@@ -808,7 +908,7 @@ async function main() {
     puppeteer: {
       headless: true,
       executablePath: process.platform === 'darwin'
-        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        ? '/Users/lowndes/Code/whatsapp-server/chrome/mac_arm-127.0.6533.119/chrome-mac-arm64/Google Chrome'
         : '/usr/bin/google-chrome-stable',
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     },
@@ -828,7 +928,8 @@ async function main() {
       console.log('Claude brain: disabled (no ANTHROPIC_API_KEY) — using pattern matching only');
     }
     sendPending(client);
-    setInterval(() => sendPending(client), POLL_INTERVAL_MS);
+    checkReminders(client);
+    setInterval(() => { sendPending(client); checkReminders(client); }, POLL_INTERVAL_MS);
   });
 
   client.on('message', async message => {
