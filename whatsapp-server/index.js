@@ -405,6 +405,12 @@ async function classifyMessage(person, text) {
     return { intent: 'assign_todo', target: assignMatch[1].trim(), task: assignMatch[2].trim() };
   }
 
+  // Fast path: reminder signals take priority over diary (both may contain times)
+  const reminderSignals = /\b(remind me|reminder|ping me|don.t let me forget|alert me|nudge me)\b/i;
+  if (reminderSignals.test(text)) {
+    return { intent: 'reminder', request: text };
+  }
+
   // Fast path: time or strong date signal → diary (no API call needed)
   const diarySignals = /\b(\d{1,2}(:\d{2})?\s*(am|pm)|tomorrow|cancel\s|reschedule|move\s+\w+\s+to\b)\b/i;
   if (diarySignals.test(text)) {
