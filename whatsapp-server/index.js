@@ -366,8 +366,9 @@ Rules:
 - DIARY: creating/moving/cancelling a calendar event with a time or date
 - REMINDER: "remind me", "ping me", "don't let me forget", "in X hours/minutes" → even if it has a time, it's a reminder not a diary entry
 - TODO: open-ended task, no time pressure, no response needed
-- ANSWER: anything that needs James to actually reply with information or content
-- When unsure between todo and answer: if they'd expect a reply, it's answer
+- SEARCH: needs current/live data — weather, news, prices, restaurants, hotels, events, sports scores, anything that changes day to day
+- ANSWER: does NOT need live data — drafting emails/messages, advice, explaining concepts, thinking through decisions, anything from general knowledge
+- When unsure between todo and answer: if they'd expect a reply, it's answer or search
 
 Respond with ONLY a JSON object:
 {"intent": "add_todo", "task": "the todo text"}
@@ -376,6 +377,7 @@ Respond with ONLY a JSON object:
 {"intent": "diary", "request": "the original request text"}
 {"intent": "reminder", "request": "the original request text"}
 {"intent": "message_person", "target": "Niko", "message": "dinner is at 7"}
+{"intent": "search", "request": "the original request text"}
 {"intent": "answer", "request": "the original request text"}`;
 
 async function classifyMessage(person, text) {
@@ -680,6 +682,61 @@ async function handleDiary(sock, person, text) {
   console.log(`[${person.name}] Diary: ${action} → ${reply.slice(0, 60)}`);
 }
 
+// ── Ollama (local Qwen) ───────────────────────────────────────────────────────
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const QWEN_MODEL = process.env.QWEN_CHAT_MODEL || 'qwen2.5:7b';
+
+async function callOllama(prompt) {
+  const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: QWEN_MODEL, prompt, stream: false }),
+  });
+  const data = await res.json();
+  return data.response?.trim() || '';
+}
+
+// ── Search via local SearXNG ──────────────────────────────────────────────────
+const SEARXNG_URL = process.env.SEARXNG_URL || 'http://localhost:8080';
+
+async function handleSearch(sock, person, text) {
+  try {
+    const url = `${SEARXNG_URL}/search?q=${encodeURIComponent(text)}&format=json&categories=general&language=en`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`SearXNG HTTP ${res.status}`);
+    const data = await res.json();
+
+    const snippets = (data.results || []).slice(0, 5)
+      .map(r => `${r.title}\n${r.content || ''}`.trim())
+      .filter(Boolean)
+      .join('\n\n');
+
+    if (!snippets) {
+      console.log(`[${person.name}] Search returned no results — falling back to Claude`);
+      return handleAnswer(sock, person, text);
+    }
+
+    const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/Vienna', dateStyle: 'full', timeStyle: 'short' });
+    const prompt = `You are James, a family assistant. Answer the question below using only the search results provided. Be concise and WhatsApp-friendly. Use bullet points (•) for lists. No preamble. Answer in the same language as the question.
+
+Today: ${now} Vienna
+Question: ${text}
+
+Search results:
+${snippets}
+
+Answer:`;
+
+    const reply = await callOllama(prompt);
+    if (!reply) throw new Error('Empty Ollama response');
+    await send(sock, person.whatsapp_number, reply);
+    console.log(`[${person.name}] Search: ${reply.slice(0, 80)}`);
+  } catch (e) {
+    console.error(`[${person.name}] Search error: ${e.message} — falling back to Claude`);
+    return handleAnswer(sock, person, text);
+  }
+}
+
 // ── Answer: general questions, research, drafts ──────────────────────────────
 const ANSWER_SYSTEM = `You are James, a family AI assistant reached via WhatsApp.
 Family: Astrid (mum), Niko (dad), Victoria/Vicky (11), Alexander/Alex (13), Maximilian/Max (15). Vienna, Austria, 1130 Hietzing.
@@ -849,6 +906,10 @@ async function handleInbound(sock, msg) {
 
     case 'message_person':
       await handleMessagePerson(sock, person, classified);
+      break;
+
+    case 'search':
+      await handleSearch(sock, person, classified.request || text);
       break;
 
     case 'answer':
