@@ -419,7 +419,8 @@ async function classifyMessage(person, text) {
       ],
     });
 
-    const raw = response.content[0].text.trim();
+    const raw = response.content[0].text.trim()
+      .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     return JSON.parse(raw);
   } catch (e) {
     console.error(`Claude classification failed: ${e.message} — defaulting to add_todo`);
