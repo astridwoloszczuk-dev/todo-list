@@ -1,7 +1,7 @@
 'use strict';
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const pino = require('pino');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const { google } = require('googleapis');
@@ -12,6 +12,7 @@ require('dotenv').config();
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const AUTH_DIR = path.join(__dirname, 'auth_baileys');
 const POLL_INTERVAL_MS = 30_000;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -34,9 +35,9 @@ async function getPeople() {
   return _people;
 }
 
-async function findPersonByNumber(number) {
+async function findPersonByJid(jid) {
   const people = await getPeople();
-  return people.find(p => p.whatsapp_number === number && !p.is_bot) || null;
+  return people.find(p => p.whatsapp_number === jid && !p.is_bot) || null;
 }
 
 const NAME_ALIASES = {
@@ -50,33 +51,22 @@ async function findPersonByName(name) {
   return people.find(p => p.name.toLowerCase() === resolved.toLowerCase() && !p.is_bot) || null;
 }
 
-// ── Number helpers ───────────────────────────────────────────────────────────
-function waIdToE164(waId) {
-  return '+' + waId.split('@')[0];
+// ── Message helpers ──────────────────────────────────────────────────────────
+function getMessageText(msg) {
+  return msg.message?.conversation
+    || msg.message?.extendedTextMessage?.text
+    || msg.message?.imageMessage?.caption
+    || '';
 }
 
 function e164ToWaId(e164) {
-  return e164.replace('+', '') + '@c.us';
-}
-
-async function resolveNumber(message) {
-  if (message.from.endsWith('@lid')) {
-    try {
-      const contact = await message.getContact();
-      return '+' + contact.number;
-    } catch (e) {
-      console.log(`Could not resolve LID ${message.from}: ${e.message}`);
-      return null;
-    }
-  }
-  return waIdToE164(message.from);
+  return e164.replace('+', '') + '@s.whatsapp.net';
 }
 
 // ── Messaging ────────────────────────────────────────────────────────────────
-async function send(client, number, message) {
-  const numberId = await client.getNumberId(number.replace('+', ''));
-  const chatId = numberId ? numberId._serialized : e164ToWaId(number);
-  await client.sendMessage(chatId, message);
+async function send(sock, jidOrNumber, message) {
+  const jid = jidOrNumber.includes('@') ? jidOrNumber : e164ToWaId(jidOrNumber);
+  await sock.sendMessage(jid, { text: message });
 }
 
 // ── Assignment rules ─────────────────────────────────────────────────────────
@@ -134,9 +124,9 @@ async function buildReassignOptions(todo, justRefusedId) {
 }
 
 // ── Send assignment request ──────────────────────────────────────────────────
-async function requestAcceptance(client, todo, assigner, target) {
+async function requestAcceptance(sock, todo, assigner, target) {
   if (!target.whatsapp_number) return;
-  await send(client, target.whatsapp_number, buildAcceptRefuseMsg(todo.text, assigner.name));
+  await send(sock, target.whatsapp_number, buildAcceptRefuseMsg(todo.text, assigner.name));
   await createPendingAction(target.id, todo.id, 'accept_refuse', [
     { number: 1, label: 'Accept', action: 'accept' },
     { number: 2, label: 'Refuse', action: 'refuse' },
@@ -144,7 +134,7 @@ async function requestAcceptance(client, todo, assigner, target) {
 }
 
 // ── Handle a pending action response ────────────────────────────────────────
-async function handlePendingAction(client, person, text) {
+async function handlePendingAction(sock, person, text) {
   const pending = await getPendingAction(person.id);
   if (!pending) return false;
 
@@ -153,7 +143,7 @@ async function handlePendingAction(client, person, text) {
 
   const option = pending.options.find(o => o.number === num);
   if (!option) {
-    await send(client, person.whatsapp_number, `Please reply with one of the listed numbers.`);
+    await send(sock, person.whatsapp_number, `Please reply with one of the listed numbers.`);
     return true;
   }
 
@@ -165,9 +155,9 @@ async function handlePendingAction(client, person, text) {
   }
 
   if (pending.type === 'accept_refuse') {
-    await handleAcceptRefuse(client, person, todo, option, pending);
+    await handleAcceptRefuse(sock, person, todo, option, pending);
   } else if (pending.type === 'reassign') {
-    await handleReassign(client, person, todo, option);
+    await handleReassign(sock, person, todo, option);
   }
 
   const next = await getPendingAction(person.id);
@@ -177,7 +167,7 @@ async function handlePendingAction(client, person, text) {
     if (nextTodo) {
       const people = await getPeople();
       const assigner = people.find(p => p.id === nextTodo.created_by);
-      await send(client, person.whatsapp_number,
+      await send(sock, person.whatsapp_number,
         buildAcceptRefuseMsg(nextTodo.text, assigner?.name || 'Someone'));
     }
   }
@@ -185,24 +175,24 @@ async function handlePendingAction(client, person, text) {
   return true;
 }
 
-async function handleAcceptRefuse(client, person, todo, option, pending) {
+async function handleAcceptRefuse(sock, person, todo, option, pending) {
   const people = await getPeople();
 
   if (option.action === 'accept') {
     await supa.from('todos').update({ assignment_status: 'accepted' }).eq('id', todo.id);
     await supa.from('pending_actions').delete().eq('id', pending.id);
-    await send(client, person.whatsapp_number, `✅ Accepted: "${todo.text}"`);
+    await send(sock, person.whatsapp_number, `✅ Accepted: "${todo.text}"`);
 
     const creator = people.find(p => p.id === todo.created_by);
     if (creator && creator.id !== person.id && creator.whatsapp_number) {
-      await send(client, creator.whatsapp_number, `✅ ${person.name} accepted: "${todo.text}"`);
+      await send(sock, creator.whatsapp_number, `✅ ${person.name} accepted: "${todo.text}"`);
     }
     console.log(`[${person.name}] Accepted: ${todo.text.slice(0, 50)}`);
 
   } else if (option.action === 'refuse') {
     await supa.from('todo_refusals').insert({ todo_id: todo.id, person_id: person.id });
     await supa.from('pending_actions').delete().eq('id', pending.id);
-    await send(client, person.whatsapp_number, `❌ Refused: "${todo.text}"`);
+    await send(sock, person.whatsapp_number, `❌ Refused: "${todo.text}"`);
 
     const creator = people.find(p => p.id === todo.created_by);
     if (!creator?.whatsapp_number) return;
@@ -210,13 +200,13 @@ async function handleAcceptRefuse(client, person, todo, option, pending) {
     const options = await buildReassignOptions(todo, person.id);
     const lines = [`❌ *${person.name}* refused:\n"${todo.text}"\n\nAssign to:`];
     options.forEach(o => lines.push(`${o.number}️⃣ ${o.label}`));
-    await send(client, creator.whatsapp_number, lines.join('\n'));
+    await send(sock, creator.whatsapp_number, lines.join('\n'));
     await createPendingAction(creator.id, todo.id, 'reassign', options);
     console.log(`[${person.name}] Refused: ${todo.text.slice(0, 50)}`);
   }
 }
 
-async function handleReassign(client, person, todo, option) {
+async function handleReassign(sock, person, todo, option) {
   const people = await getPeople();
   await supa.from('pending_actions').delete().eq('person_id', person.id).eq('todo_id', todo.id);
 
@@ -224,7 +214,7 @@ async function handleReassign(client, person, todo, option) {
     await supa.from('todos')
       .update({ assigned_to: person.id, assignment_status: 'accepted' })
       .eq('id', todo.id);
-    await send(client, person.whatsapp_number, `✅ You'll handle: "${todo.text}"`);
+    await send(sock, person.whatsapp_number, `✅ You'll handle: "${todo.text}"`);
     console.log(`[${person.name}] Took task: ${todo.text.slice(0, 50)}`);
 
   } else if (option.action === 'assign') {
@@ -237,13 +227,13 @@ async function handleReassign(client, person, todo, option) {
       .eq('id', todo.id);
 
     if (autoAccept) {
-      await send(client, person.whatsapp_number, `✅ Assigned to ${target.name}: "${todo.text}"`);
+      await send(sock, person.whatsapp_number, `✅ Assigned to ${target.name}: "${todo.text}"`);
       if (target.whatsapp_number) {
-        await send(client, target.whatsapp_number, `📋 *${person.name}* assigned you: "${todo.text}"`);
+        await send(sock, target.whatsapp_number, `📋 *${person.name}* assigned you: "${todo.text}"`);
       }
     } else {
-      await send(client, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
-      await requestAcceptance(client, todo, person, target);
+      await send(sock, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
+      await requestAcceptance(sock, todo, person, target);
     }
     console.log(`[${person.name}→${target.name}] Reassigned: ${todo.text.slice(0, 50)}`);
 
@@ -251,13 +241,13 @@ async function handleReassign(client, person, todo, option) {
     await supa.from('todos')
       .update({ status: 'deleted', deleted_at: new Date().toISOString() })
       .eq('id', todo.id);
-    await send(client, person.whatsapp_number, `🗑️ Deleted: "${todo.text}"`);
+    await send(sock, person.whatsapp_number, `🗑️ Deleted: "${todo.text}"`);
     console.log(`[${person.name}] Deleted: ${todo.text.slice(0, 50)}`);
   }
 }
 
 // ── Todo operations ──────────────────────────────────────────────────────────
-async function addSelfTodo(client, person, text) {
+async function addSelfTodo(sock, person, text) {
   const { error } = await supa.from('todos').insert({
     text,
     created_by: person.id,
@@ -268,14 +258,14 @@ async function addSelfTodo(client, person, text) {
   });
   if (error) {
     console.error(`Failed to save todo for ${person.name}:`, error.message);
-    await send(client, person.whatsapp_number, 'Sorry, something went wrong. Try again?');
+    await send(sock, person.whatsapp_number, 'Sorry, something went wrong. Try again?');
     return;
   }
   console.log(`[${person.name}] Todo added: ${text.slice(0, 60)}`);
-  await send(client, person.whatsapp_number, 'Got it ✓ Added to your todos.');
+  await send(sock, person.whatsapp_number, 'Got it ✓ Added to your todos.');
 }
 
-async function addAssignedTodo(client, person, targetName, taskText) {
+async function addAssignedTodo(sock, person, targetName, taskText) {
   const target = await findPersonByName(targetName);
   if (!target || target.id === person.id) return false;
 
@@ -291,18 +281,18 @@ async function addAssignedTodo(client, person, targetName, taskText) {
 
   if (error) {
     console.error('Insert error:', error.message);
-    await send(client, person.whatsapp_number, 'Sorry, something went wrong.');
+    await send(sock, person.whatsapp_number, 'Sorry, something went wrong.');
     return true;
   }
 
   if (autoAccept) {
-    await send(client, person.whatsapp_number, `✅ Assigned to ${target.name}: "${taskText}"`);
+    await send(sock, person.whatsapp_number, `✅ Assigned to ${target.name}: "${taskText}"`);
     if (target.whatsapp_number) {
-      await send(client, target.whatsapp_number, `📋 *${person.name}* assigned you: "${taskText}"`);
+      await send(sock, target.whatsapp_number, `📋 *${person.name}* assigned you: "${taskText}"`);
     }
   } else {
-    await send(client, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
-    await requestAcceptance(client, inserted, person, target);
+    await send(sock, person.whatsapp_number, `📤 Sent to ${target.name} for acceptance`);
+    await requestAcceptance(sock, inserted, person, target);
   }
 
   console.log(`[${person.name}→${target.name}] ${autoAccept ? 'Auto-accepted' : 'Pending'}: ${taskText.slice(0, 50)}`);
@@ -310,9 +300,7 @@ async function addAssignedTodo(client, person, targetName, taskText) {
 }
 
 // ── Completion: mark numbered todos as done ──────────────────────────────────
-// Format: pure numbers, e.g. "1", "1 3", "2 4 5"
-// Matches against today's digest order (high→medium→low)
-async function handleCompletion(client, person, numbers) {
+async function handleCompletion(sock, person, numbers) {
   const PRIORITY_ORDER = { high: 0, medium: 1, low: 2, someday: 3 };
 
   const { data: todos } = await supa.from('todos')
@@ -322,7 +310,7 @@ async function handleCompletion(client, person, numbers) {
     .eq('assignment_status', 'accepted');
 
   if (!todos?.length) {
-    await send(client, person.whatsapp_number, 'No pending todos to mark as done.');
+    await send(sock, person.whatsapp_number, 'No pending todos to mark as done.');
     return;
   }
 
@@ -343,7 +331,7 @@ async function handleCompletion(client, person, numbers) {
   }
 
   if (!done.length) {
-    await send(client, person.whatsapp_number, `No matching todos (you have ${todos.length}).`);
+    await send(sock, person.whatsapp_number, `No matching todos (you have ${todos.length}).`);
     return;
   }
 
@@ -354,13 +342,11 @@ async function handleCompletion(client, person, numbers) {
 
   const lines = done.map(t => `✅ ${t.text}`);
   if (invalid.length) lines.push(`\n(Numbers not found: ${invalid.join(', ')})`);
-  await send(client, person.whatsapp_number, lines.join('\n'));
-  console.log(`[${person.name}] Completed ${done.length} todo(s): ${done.map(t => t.text.slice(0,30)).join(', ')}`);
+  await send(sock, person.whatsapp_number, lines.join('\n'));
+  console.log(`[${person.name}] Completed ${done.length} todo(s): ${done.map(t => t.text.slice(0, 30)).join(', ')}`);
 }
 
 // ── Claude brain: classify inbound intent ────────────────────────────────────
-// Uses prompt caching on the system prompt to keep costs low.
-
 const BRAIN_SYSTEM = `You are the inbox router for a family WhatsApp assistant. Classify each message into exactly one intent.
 
 Intents:
@@ -393,31 +379,26 @@ Respond with ONLY a JSON object:
 {"intent": "answer", "request": "the original request text"}`;
 
 async function classifyMessage(person, text) {
-  // Fast path: pure numbers — no API call needed
   if (/^\d[\d\s]*$/.test(text.trim())) {
     const numbers = text.trim().split(/\s+/).map(Number);
     return { intent: 'complete_todos', numbers };
   }
 
-  // Fast path: "Name: task" pattern — no API call needed
   const assignMatch = text.match(/^(\w+)\s*:\s*(.+)$/s);
   if (assignMatch) {
     return { intent: 'assign_todo', target: assignMatch[1].trim(), task: assignMatch[2].trim() };
   }
 
-  // Fast path: reminder signals take priority over diary (both may contain times)
   const reminderSignals = /\b(remind me|reminder|ping me|don.t let me forget|alert me|nudge me)\b/i;
   if (reminderSignals.test(text)) {
     return { intent: 'reminder', request: text };
   }
 
-  // Fast path: time or strong date signal → diary (no API call needed)
   const diarySignals = /\b(\d{1,2}(:\d{2})?\s*(am|pm)|tomorrow|cancel\s|reschedule|move\s+\w+\s+to\b)\b/i;
   if (diarySignals.test(text)) {
     return { intent: 'diary', request: text };
   }
 
-  // Use Claude if available, otherwise default to add_todo
   if (!ai) {
     return { intent: 'add_todo', task: text };
   }
@@ -609,13 +590,13 @@ Rules:
   return JSON.parse(raw);
 }
 
-async function handleDiary(client, person, text) {
+async function handleDiary(sock, person, text) {
   let parsed;
   try {
     parsed = await parseCalendarRequest(person, text);
   } catch (e) {
     console.error(`[${person.name}] Calendar parse error: ${e.message}`);
-    await send(client, person.whatsapp_number,
+    await send(sock, person.whatsapp_number,
       "Sorry, I couldn't understand that. Try something like:\n• add dentist thursday 3pm\n• move tennis to saturday\n• cancel friday appointment");
     return;
   }
@@ -694,7 +675,7 @@ async function handleDiary(client, person, text) {
     reply = `Something went wrong with the calendar. Please try again.`;
   }
 
-  await send(client, person.whatsapp_number, reply);
+  await send(sock, person.whatsapp_number, reply);
   console.log(`[${person.name}] Diary: ${action} → ${reply.slice(0, 60)}`);
 }
 
@@ -706,7 +687,7 @@ For research (hotels, restaurants, products): 3-5 concrete options with the key 
 For email/message drafts: write the complete text, clearly marked with "--- Draft ---".
 Answer in the same language the message was written in.`;
 
-async function handleAnswer(client, person, text) {
+async function handleAnswer(sock, person, text) {
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/Vienna', dateStyle: 'full', timeStyle: 'short' });
   try {
     const response = await ai.messages.create({
@@ -716,16 +697,16 @@ async function handleAnswer(client, person, text) {
       messages: [{ role: 'user', content: text }],
     });
     const reply = response.content[0].text.trim();
-    await send(client, person.whatsapp_number, reply);
+    await send(sock, person.whatsapp_number, reply);
     console.log(`[${person.name}] Answer: ${reply.slice(0, 80)}`);
   } catch (e) {
     console.error(`[${person.name}] Answer error: ${e.message}`);
-    await send(client, person.whatsapp_number, "Sorry, I couldn't get an answer right now. Try again?");
+    await send(sock, person.whatsapp_number, "Sorry, I couldn't get an answer right now. Try again?");
   }
 }
 
 // ── Reminders ────────────────────────────────────────────────────────────────
-async function handleReminder(client, person, text) {
+async function handleReminder(sock, person, text) {
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/Vienna', dateStyle: 'full', timeStyle: 'short' });
   try {
     const response = await ai.messages.create({
@@ -743,15 +724,15 @@ If time is ambiguous, default to 1 hour from now.` }],
       message: parsed.message,
       remind_at: parsed.remind_at,
     });
-    await send(client, person.whatsapp_number, `⏰ ${parsed.reply || "Got it, I'll remind you!"}`);
+    await send(sock, person.whatsapp_number, `⏰ ${parsed.reply || "Got it, I'll remind you!"}`);
     console.log(`[${person.name}] Reminder set: "${parsed.message}" at ${parsed.remind_at}`);
   } catch (e) {
     console.error(`[${person.name}] Reminder error: ${e.message}`);
-    await send(client, person.whatsapp_number, "Sorry, I couldn't set that reminder. Try: \"remind me at 3pm to call the dentist\"");
+    await send(sock, person.whatsapp_number, "Sorry, I couldn't set that reminder. Try: \"remind me at 3pm to call the dentist\"");
   }
 }
 
-async function checkReminders(client) {
+async function checkReminders(sock) {
   try {
     const now = new Date().toISOString();
     const { data: due } = await supa
@@ -763,7 +744,7 @@ async function checkReminders(client) {
     for (const r of due) {
       const whatsapp = r.people?.whatsapp_number;
       if (!whatsapp) continue;
-      await send(client, whatsapp, `⏰ Reminder: ${r.message}`);
+      await send(sock, whatsapp, `⏰ Reminder: ${r.message}`);
       await supa.from('reminders').update({ sent: true, sent_at: new Date().toISOString() }).eq('id', r.id);
       console.log(`[Reminder→${r.people.name}] ${r.message}`);
     }
@@ -773,23 +754,22 @@ async function checkReminders(client) {
 }
 
 // ── Message a family member ───────────────────────────────────────────────────
-async function handleMessagePerson(client, person, classified) {
+async function handleMessagePerson(sock, person, classified) {
   const target = await findPersonByName(classified.target);
   if (!target || !target.whatsapp_number) {
-    await send(client, person.whatsapp_number, `Sorry, I don't have WhatsApp set up for ${classified.target}.`);
+    await send(sock, person.whatsapp_number, `Sorry, I don't have WhatsApp set up for ${classified.target}.`);
     return;
   }
-  await send(client, target.whatsapp_number, `📩 *${person.name}:* ${classified.message}`);
-  await send(client, person.whatsapp_number, `✅ Sent to ${target.name}.`);
+  await send(sock, target.whatsapp_number, `📩 *${person.name}:* ${classified.message}`);
+  await send(sock, person.whatsapp_number, `✅ Sent to ${target.name}.`);
   console.log(`[${person.name}→${target.name}] "${classified.message.slice(0, 60)}"`);
 }
 
 // ── Birthday "done" reply ────────────────────────────────────────────────────
-async function handleBirthdayDone(client, person) {
-  const todayMMDD = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }).slice(5); // MM-DD
-  const todayISO  = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }); // YYYY-MM-DD
+async function handleBirthdayDone(sock, person) {
+  const todayMMDD = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE }).slice(5);
+  const todayISO  = new Date().toLocaleDateString('en-CA', { timeZone: CALENDAR_TIMEZONE });
 
-  // Find birthdays today where this person is a reminder recipient and hasn't acked yet
   const { data: bdayRows } = await supa
     .from('birthdays').select('id, name').eq('birth_date', todayMMDD);
   if (!bdayRows?.length) return false;
@@ -802,7 +782,7 @@ async function handleBirthdayDone(client, person) {
 
     const { data: ack } = await supa.from('birthday_acks')
       .select('id').eq('birthday_id', bday.id).eq('ack_date', todayISO).eq('acked_by', person.name);
-    if (ack?.length) continue; // already acked
+    if (ack?.length) continue;
 
     await supa.from('birthday_acks').insert({
       birthday_id: bday.id, ack_date: todayISO, acked_by: person.name,
@@ -811,77 +791,74 @@ async function handleBirthdayDone(client, person) {
   }
 
   if (!confirmed.length) return false;
-  await send(client, person.whatsapp_number, `🎂 Great, marked as done for: ${confirmed.join(', ')}!`);
+  await send(sock, person.whatsapp_number, `🎂 Great, marked as done for: ${confirmed.join(', ')}!`);
   console.log(`[${person.name}] Birthday ack via WhatsApp: ${confirmed.join(', ')}`);
   return true;
 }
 
 // ── Main inbound handler ─────────────────────────────────────────────────────
-async function handleInbound(client, message) {
-  const text = message.body.trim();
+async function handleInbound(sock, msg) {
+  const text = getMessageText(msg).trim();
   if (!text) return;
 
-  const number = await resolveNumber(message);
-  if (!number) return;
+  const jid = msg.key.remoteJid;
+  console.log(`DEBUG JID: ${jid}`);
 
-  const person = await findPersonByNumber(number);
+  const person = await findPersonByJid(jid);
   if (!person) {
-    console.log(`Ignored message from unknown number: ${number}`);
+    console.log(`Ignored message from unknown JID: ${jid}`);
     return;
   }
 
-  // Pending action responses (numbered replies within an active dialogue) take priority
-  const handled = await handlePendingAction(client, person, text);
+  const handled = await handlePendingAction(sock, person, text);
   if (handled) return;
 
-  // Fast-path: "done" → check for birthday acks before full classification
   if (/^done\.?$/i.test(text)) {
-    const bdayHandled = await handleBirthdayDone(client, person);
+    const bdayHandled = await handleBirthdayDone(sock, person);
     if (bdayHandled) return;
   }
 
-  // Classify intent
   const classified = await classifyMessage(person, text);
   console.log(`[${person.name}] intent=${classified.intent} | "${text.slice(0, 60)}"`);
 
   switch (classified.intent) {
     case 'complete_todos':
-      await handleCompletion(client, person, classified.numbers);
+      await handleCompletion(sock, person, classified.numbers);
       break;
 
     case 'assign_todo': {
-      const assigned = await addAssignedTodo(client, person, classified.target, classified.task);
+      const assigned = await addAssignedTodo(sock, person, classified.target, classified.task);
       if (!assigned) {
-        await addSelfTodo(client, person, text);
+        await addSelfTodo(sock, person, text);
       }
       break;
     }
 
     case 'diary':
-      await handleDiary(client, person, text);
+      await handleDiary(sock, person, text);
       break;
 
     case 'add_todo':
-      await addSelfTodo(client, person, classified.task || text);
+      await addSelfTodo(sock, person, classified.task || text);
       break;
 
     case 'reminder':
-      await handleReminder(client, person, classified.request || text);
+      await handleReminder(sock, person, classified.request || text);
       break;
 
     case 'message_person':
-      await handleMessagePerson(client, person, classified);
+      await handleMessagePerson(sock, person, classified);
       break;
 
     case 'answer':
     default:
-      await handleAnswer(client, person, classified.request || text);
+      await handleAnswer(sock, person, classified.request || text);
       break;
   }
 }
 
 // ── Outbound message queue ───────────────────────────────────────────────────
-async function sendPending(client) {
+async function sendPending(sock) {
   const { data: messages, error } = await supa
     .from('outbound_messages').select('*')
     .eq('status', 'pending')
@@ -893,7 +870,7 @@ async function sendPending(client) {
   console.log(`Sending ${messages.length} pending message(s)...`);
   for (const msg of messages) {
     try {
-      await client.sendMessage(e164ToWaId(msg.to_number), msg.message);
+      await sock.sendMessage(e164ToWaId(msg.to_number), { text: msg.message });
       await supa.from('outbound_messages')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
         .eq('id', msg.id);
@@ -909,47 +886,59 @@ async function sendPending(client) {
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 async function main() {
-  const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-      headless: true,
-      executablePath: process.platform === 'darwin'
-        ? '/Users/lowndes/Code/whatsapp-server/chrome/mac_arm-127.0.6533.119/chrome-mac-arm64/Google Chrome'
-        : '/usr/bin/google-chrome-stable',
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    },
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { version } = await fetchLatestBaileysVersion();
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'info' }),
+    printQRInTerminal: false,
+    browser: ['Mac OS', 'Chrome', '14.4.1'],
   });
 
-  client.on('qr', qr => {
-    console.log('\nScan this QR code in WhatsApp on the iPhone:');
-    console.log('(WhatsApp → Settings → Linked Devices → Link a Device)\n');
-    qrcode.generate(qr, { small: true });
-  });
+  sock.ev.on('creds.update', saveCreds);
 
-  client.on('ready', () => {
-    console.log('WhatsApp connected and ready.');
-    if (ai) {
-      console.log('Claude brain: active (prompt caching on)');
-    } else {
-      console.log('Claude brain: disabled (no ANTHROPIC_API_KEY) — using pattern matching only');
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('QR code needed — scan in WhatsApp (Settings → Linked Devices → Link a Device)');
+      require('qrcode-terminal').generate(qr, { small: true });
     }
-    sendPending(client);
-    checkReminders(client);
-    setInterval(() => { sendPending(client); checkReminders(client); }, POLL_INTERVAL_MS);
+
+    if (connection === 'open') {
+      console.log('WhatsApp connected and ready.');
+      console.log(ai ? 'Claude brain: active' : 'Claude brain: disabled (no ANTHROPIC_API_KEY)');
+      sendPending(sock);
+      checkReminders(sock);
+      setInterval(() => { sendPending(sock); checkReminders(sock); }, POLL_INTERVAL_MS);
+    }
+
+    if (connection === 'close') {
+      const reason = lastDisconnect?.error?.output?.statusCode;
+      if (reason === DisconnectReason.loggedOut) {
+        console.error('Logged out — delete auth_baileys/ folder and restart to re-scan QR');
+        process.exit(1);
+      }
+      console.log('Reconnecting...');
+      main();
+    }
   });
 
-  client.on('message', async message => {
-    if (message.from.endsWith('@g.us')) return;
-    if (message.from === 'status@broadcast') return;
-    await handleInbound(client, message);
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key.fromMe) continue;
+      if (msg.key.remoteJid?.endsWith('@g.us')) continue;
+      if (msg.key.remoteJid === 'status@broadcast') continue;
+      try {
+        await handleInbound(sock, msg);
+      } catch (e) {
+        console.error('handleInbound error:', e.message);
+      }
+    }
   });
-
-  client.on('disconnected', reason => {
-    console.warn('WhatsApp disconnected:', reason);
-    process.exit(1);
-  });
-
-  await client.initialize();
 }
 
 main().catch(err => {
