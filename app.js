@@ -12,7 +12,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── State ────────────────────────────────────────────────────────────────────
 let currentUser = localStorage.getItem('todos_user') || null;
-let currentTab  = localStorage.getItem('todos_tab')  || MEMBERS[0];
+let currentTab  = MEMBERS.includes(localStorage.getItem('todos_tab')) ? localStorage.getItem('todos_tab') : MEMBERS[0];
 let addTarget   = currentTab;
 let expandedId  = null;
 let items       = new Map();
@@ -29,14 +29,6 @@ const userNameEl  = document.getElementById('user-name-input');
 const userSaveBtn = document.getElementById('user-save-btn');
 const tabBar      = document.getElementById('tab-bar');
 const modalNames  = document.getElementById('modal-names');
-const birthdaysEl = document.getElementById('birthdays');
-const bdayListEl  = document.getElementById('bday-list');
-const bdayNameIn  = document.getElementById('bday-name-input');
-const bdayDayIn   = document.getElementById('bday-day-input');
-const bdayMonthIn = document.getElementById('bday-month-input');
-const bdayNotesIn = document.getElementById('bday-notes-input');
-const bdayAddBtn  = document.getElementById('bday-add-btn');
-const bdayPillsEl = document.getElementById('bday-remind-pills');
 const addBarEl    = document.querySelector('.add-bar');
 const mainEl      = document.querySelector('main');
 
@@ -64,135 +56,6 @@ MEMBERS.forEach(name => {
 });
 
 
-// ── Birthday tab button ───────────────────────────────────────────────────────
-const bdayTabBtn = document.createElement('button');
-bdayTabBtn.className = 'tab-btn';
-bdayTabBtn.dataset.member = 'birthdays';
-bdayTabBtn.innerHTML = `<span style="font-size:1.3rem;line-height:1.2">🎂</span><span>Birthdays</span>`;
-bdayTabBtn.addEventListener('click', () => setTab('birthdays'));
-tabBar.appendChild(bdayTabBtn);
-
-// Populate day dropdown 1–31
-for (let d = 1; d <= 31; d++) {
-  const opt = document.createElement('option');
-  opt.value = String(d).padStart(2, '0');
-  opt.textContent = d;
-  bdayDayIn.appendChild(opt);
-}
-
-// Build remind pills (one per MEMBER, toggleable)
-let remindSelected = new Set([currentUser].filter(Boolean));
-MEMBERS.forEach(name => {
-  const pill = document.createElement('button');
-  pill.className = 'bday-pill' + (remindSelected.has(name) ? ' on' : '');
-  pill.style.background = COLORS[name];
-  pill.textContent = name;
-  pill.addEventListener('click', () => {
-    remindSelected.has(name) ? remindSelected.delete(name) : remindSelected.add(name);
-    pill.classList.toggle('on', remindSelected.has(name));
-  });
-  bdayPillsEl.appendChild(pill);
-});
-
-// ── Birthday state ────────────────────────────────────────────────────────────
-let birthdays = [];
-let bdayAcks  = new Set(); // birthday_ids acked today
-
-function bdayNextDate(mmdd) {
-  const [m, d] = mmdd.split('-').map(Number);
-  const today = new Date(); today.setHours(0,0,0,0);
-  const thisYear = new Date(today.getFullYear(), m - 1, d);
-  return thisYear >= today ? thisYear : new Date(today.getFullYear() + 1, m - 1, d);
-}
-
-function bdayDaysUntil(mmdd) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const next = bdayNextDate(mmdd); next.setHours(0,0,0,0);
-  return Math.round((next - today) / 86400000);
-}
-
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function formatBdayDate(mmdd) {
-  const [m, d] = mmdd.split('-').map(Number);
-  return `${d} ${MONTHS[m - 1]}`;
-}
-
-async function loadBirthdays() {
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const [bRes, aRes] = await Promise.all([
-    db.from('birthdays').select('*').order('birth_date'),
-    db.from('birthday_acks').select('birthday_id').eq('ack_date', todayISO).eq('acked_by', currentUser || 'unknown'),
-  ]);
-  birthdays = bRes.data || [];
-  bdayAcks  = new Set((aRes.data || []).map(r => r.birthday_id));
-  if (currentTab === 'birthdays') renderBirthdays();
-}
-
-function renderBirthdays() {
-  bdayListEl.innerHTML = '';
-  if (!birthdays.length) {
-    bdayListEl.innerHTML = '<div class="bday-empty">No birthdays added yet.</div>';
-    return;
-  }
-  const sorted = [...birthdays].sort((a, b) => bdayDaysUntil(a.birth_date) - bdayDaysUntil(b.birth_date));
-  sorted.forEach(b => {
-    const days   = bdayDaysUntil(b.birth_date);
-    const isToday    = days === 0;
-    const isTomorrow = days === 1;
-    const acked  = bdayAcks.has(b.id);
-
-    const countdownClass = isToday ? 'today' : days <= 7 ? 'soon' : 'normal';
-    const countdownText  = isToday ? '🎂 TODAY' : isTomorrow ? 'Tomorrow' : `In ${days} days`;
-    const cardClass      = isToday ? 'today' : isTomorrow ? 'tomorrow' : '';
-
-    const card = document.createElement('div');
-    card.className = `bday-card ${cardClass}`;
-    card.innerHTML = `
-      <div class="bday-info">
-        <div class="bday-name">${escapeHtml(b.name)}</div>
-        <div class="bday-meta">${formatBdayDate(b.birth_date)}${b.notes ? ' · ' + escapeHtml(b.notes) : ''}</div>
-      </div>
-      <span class="bday-countdown ${countdownClass}">${countdownText}</span>
-      ${(isToday || isTomorrow) ? `<button class="bday-ack-btn${acked ? ' acked' : ''}" data-id="${b.id}">${acked ? 'Done ✓' : 'Done'}</button>` : ''}
-      <button class="bday-del-btn" data-id="${b.id}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    `;
-    bdayListEl.appendChild(card);
-  });
-
-  bdayListEl.querySelectorAll('.bday-ack-btn:not(.acked)').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const todayISO = new Date().toISOString().slice(0, 10);
-      const by = currentUser || 'unknown';
-      await db.from('birthday_acks').upsert({ birthday_id: Number(btn.dataset.id), ack_date: todayISO, acked_by: by }, { onConflict: 'birthday_id,ack_date,acked_by' });
-    });
-  });
-
-  bdayListEl.querySelectorAll('.bday-del-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await db.from('birthdays').delete().eq('id', btn.dataset.id);
-    });
-  });
-}
-
-bdayAddBtn.addEventListener('click', async () => {
-  if (!currentUser) { showUserModal(); return; }
-  const name = bdayNameIn.value.trim();
-  const month = bdayMonthIn.value;
-  const day   = bdayDayIn.value;
-  if (!name || !month || !day) { bdayNameIn.focus(); return; }
-  const date = `${month}-${day}`;
-  const { data, error } = await db.from('birthdays').insert({ name, birth_date: date, notes: bdayNotesIn.value.trim() || null, created_by: currentUser }).select().single();
-  if (error || !data) return;
-  if (remindSelected.size) {
-    const rows = [...remindSelected].map(p => ({ birthday_id: data.id, person_name: p }));
-    await db.from('birthday_reminders').insert(rows);
-  }
-  bdayNameIn.value = ''; bdayDayIn.value = ''; bdayMonthIn.value = ''; bdayNotesIn.value = '';
-});
-bdayNameIn.addEventListener('keydown', e => e.key === 'Enter' && bdayMonthIn.focus());
-
 // ── User setup ────────────────────────────────────────────────────────────────
 function showUserModal() { userModal.classList.remove('hidden'); userNameEl.focus(); }
 function saveUser() {
@@ -215,19 +78,11 @@ function setTab(name) {
   );
   expandedId = null;
 
-  if (name === 'birthdays') {
-    addBarEl.classList.add('hidden');
-    mainEl.classList.add('hidden');
-    birthdaysEl.classList.remove('hidden');
-    renderBirthdays();
-  } else {
-    addTarget = name;
-    localStorage.setItem('todos_tab', name);
-    addBarEl.classList.remove('hidden');
-    mainEl.classList.remove('hidden');
-    birthdaysEl.classList.add('hidden');
-    renderList();
-  }
+  addTarget = name;
+  localStorage.setItem('todos_tab', name);
+  addBarEl.classList.remove('hidden');
+  mainEl.classList.remove('hidden');
+  renderList();
 }
 
 // ── Time formatting ──────────────────────────────────────────────────────────
@@ -374,11 +229,6 @@ async function loadItems() {
 }
 
 // ── Real-time ─────────────────────────────────────────────────────────────────
-db.channel('birthdays-realtime')
-  .on('postgres_changes', { event: '*', schema: 'public', table: 'birthdays' },     () => loadBirthdays())
-  .on('postgres_changes', { event: '*', schema: 'public', table: 'birthday_acks' }, () => loadBirthdays())
-  .subscribe();
-
 db.channel('todos-realtime')
   .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'todos' }, ({ new: item }) => {
     items.set(item.id, item); renderList();
@@ -492,6 +342,5 @@ if (!SpeechRecognition) {
 if (!currentUser) { showUserModal(); } else { userBadge.textContent = currentUser; }
 setTab(currentTab);
 loadItems();
-loadBirthdays();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');

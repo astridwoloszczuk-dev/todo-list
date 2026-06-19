@@ -219,7 +219,6 @@ def main():
     ai   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     prioritise(supa, ai)
-    generate_blurbs(supa, ai)
     print("Done.")
 
 
