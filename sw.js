@@ -1,20 +1,8 @@
-const CACHE = 'todos-v1';
-const PRECACHE = ['./', './index.html', './app.js', './manifest.json'];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE)));
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys =>
-    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-  ));
-  self.clients.claim();
-});
-
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  if (e.request.url.includes('supabase.co')) return;
-  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+// Retired 27 Nov 2026: drop every cache and unregister, so installed copies show the notice.
+self.addEventListener('install', function () { self.skipWaiting(); });
+self.addEventListener('activate', function (e) {
+  e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })
+    .then(function () { return self.registration.unregister(); })
+    .then(function () { return self.clients.matchAll(); })
+    .then(function (cs) { cs.forEach(function (c) { c.navigate(c.url); }); }));
 });
